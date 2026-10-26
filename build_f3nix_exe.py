@@ -3,6 +3,9 @@ import sys
 import shutil
 import subprocess
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 def build():
     print("=======================================================")
     print("       🚀 COMPILADOR NATIVO F3NIX PARA WINDOWS 11      ")
