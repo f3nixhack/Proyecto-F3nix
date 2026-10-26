@@ -152,6 +152,7 @@ class F3nixStudio(QMainWindow):
     open_doctor_requested = pyqtSignal()
     turbo_mode_changed = pyqtSignal(bool)
     activity_logged = pyqtSignal(str, str, str) # category, action, details
+    window_closed = pyqtSignal()
 
     def __init__(self, memory_vault: Optional[MemoryVault] = None, rag: Optional[LocalRAG] = None, council: Optional[MultiAgentCouncil] = None, speaker: Optional[VoiceSpeaker] = None, parent=None):
         super().__init__(parent)
@@ -462,7 +463,7 @@ class F3nixStudio(QMainWindow):
         # Botón para minimizar al HUD flotante
         hide_btn = QPushButton("🗕 Minimizar al HUD")
         hide_btn.setToolTip("Oculta esta ventana y continúa usando F3NIX desde el HUD flotante")
-        hide_btn.clicked.connect(self.hide)
+        hide_btn.clicked.connect(self.close)
         header_layout.addWidget(hide_btn)
 
         return header_layout
@@ -3757,5 +3758,6 @@ class F3nixStudio(QMainWindow):
             self.council_worker.cancel()
         if self.speaker and self.speaker.is_speaking:
             self.speaker.stop()
+        self.window_closed.emit()
         super().closeEvent(event)
 

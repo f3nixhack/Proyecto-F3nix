@@ -146,6 +146,7 @@ class ThrusterApp:
         self.studio.debate_concluded.connect(self.on_debate_concluded)
         self.studio.open_model_store_requested.connect(self.open_model_store)
         self.studio.open_doctor_requested.connect(self.open_environment_doctor)
+        self.studio.window_closed.connect(self.on_studio_closed)
 
         # Conectar callbacks de IA (temporizadores y telemetría de actividad)
         self.ai.on_timer_finished_callback = self.on_timer_finished
@@ -242,12 +243,20 @@ class ThrusterApp:
 
     def on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self.toggle_hud_visibility()
+            if self.studio.isVisible():
+                self.studio.raise_()
+                self.studio.activateWindow()
+            else:
+                self.toggle_hud_visibility()
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.toggle_studio()
 
     def toggle_hud_visibility(self):
         if self.hud.isVisible():
             self.hud.hide()
         else:
+            if self.studio.isVisible():
+                self.studio.hide()
             self.hud.show()
             self.hud.raise_()
             self.hud.activateWindow()
@@ -431,6 +440,14 @@ class ThrusterApp:
                 on_start=lambda: self.hud.state_changed.emit("speaking"),
                 on_finish=lambda: self.hud.state_changed.emit("idle")
             )
+            # Notificación nativa de Windows (Toast de Sistema)
+            if hasattr(self, "tray") and self.tray.isVisible():
+                self.tray.showMessage(
+                    "🏛️ Mesa Redonda F3NIX",
+                    f"Debate completado: {short_topic}\nEl Director ha emitido el Plan Maestro.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    6000
+                )
         except Exception as e:
             logger.error(f"Error en on_debate_concluded: {e}")
 
@@ -446,13 +463,22 @@ class ThrusterApp:
         )
 
     def toggle_studio(self):
-        """Abre o minimiza el Workspace F3NIX Studio."""
+        """Abre o minimiza el Workspace F3NIX Studio con ocultamiento automático del Avatar flotante."""
         if self.studio.isVisible():
             self.studio.hide()
+            self.hud.show()
+            self.hud.raise_()
         else:
+            self.hud.hide()
             self.studio.show()
             self.studio.raise_()
             self.studio.activateWindow()
+
+    def on_studio_closed(self):
+        """Restaura automáticamente el avatar flotante cuando F3NIX Studio se cierra o se minimiza."""
+        if not self.hud.isVisible():
+            self.hud.show()
+            self.hud.raise_()
 
     def on_studio_file_loaded(self, filename: str, content: str):
         """Maneja la carga o remoción de archivos desde el visor del Studio."""
@@ -828,15 +854,23 @@ class ThrusterApp:
             self.studio.append_chat_message("F3nix", full_reply)
 
     def start(self):
-        """Arranca el HUD y el escuchador PTT con saludo de bienvenida."""
+        """Arranca el HUD y el escuchador PTT con auto-arranque silencioso de Ollama y saludo de bienvenida."""
         self.hud.show()
         self.listener.start()
 
         if not EnvironmentDoctor.is_ollama_running():
-            welcome_msg = "Doctor F3NIX: El motor Ollama no responde. Abriendo diagnóstico..."
-            self.hud.subtitle_received.emit("Doctor F3NIX", welcome_msg)
-            self.open_environment_doctor()
-        elif not self.hud.available_models:
+            self.hud.subtitle_received.emit("F3NIX", "Iniciando servicio de IA local en segundo plano...")
+            ok, msg = EnvironmentDoctor.auto_start_ollama(wait_seconds=6)
+            if not ok:
+                self.hud.subtitle_received.emit("Doctor F3NIX", "Ollama no pudo iniciarse automáticamente. Abriendo diagnóstico...")
+                self.open_environment_doctor()
+            else:
+                installed_models = self.ai.list_installed_models()
+                self.hud.available_models = installed_models
+                self.hud.active_model = self.ai.current_model
+                self.studio.sync_models_and_voices(installed_models, self.ai.current_model, self.speaker.current_voice)
+
+        if not self.hud.available_models:
             welcome_msg = "Bienvenido a F3nix. Selecciona un cerebro de IA para comenzar."
             self.hud.subtitle_received.emit("F3nix", welcome_msg)
             # Abrir automáticamente el centro de descargas para nuevos usuarios
