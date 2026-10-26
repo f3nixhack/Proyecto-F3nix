@@ -460,11 +460,27 @@ class F3nixStudio(QMainWindow):
         header_layout.addWidget(voice_lbl)
         header_layout.addWidget(self.voice_combo)
 
-        # Botón para minimizar al HUD flotante
-        hide_btn = QPushButton("🗕 Minimizar al HUD")
-        hide_btn.setToolTip("Oculta esta ventana y continúa usando F3NIX desde el HUD flotante")
-        hide_btn.clicked.connect(self.close)
-        header_layout.addWidget(hide_btn)
+        # Botón para volver al avatar flotante
+        self.btn_back_to_avatar = QPushButton("👁️ Volver al Avatar")
+        self.btn_back_to_avatar.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back_to_avatar.setToolTip("Oculta F3NIX Studio y regresa al Avatar Flotante en tu pantalla (sin cerrar el programa)")
+        self.btn_back_to_avatar.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #005A6E, stop:1 #008B9B);
+                color: #FFFFFF;
+                border: 1px solid #00E5FF;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: bold;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background: #00E5FF;
+                color: #0B0F17;
+            }
+        """)
+        self.btn_back_to_avatar.clicked.connect(self.close)
+        header_layout.addWidget(self.btn_back_to_avatar)
 
         return header_layout
 
@@ -3753,11 +3769,12 @@ class F3nixStudio(QMainWindow):
             )
 
     def closeEvent(self, event):
-        """Limpia procesos y silencia reproducción de audio al cerrar la ventana de F3NIX Studio."""
+        """Oculta la ventana y silencia procesos sin destruir el estado de Studio ni cerrar F3NIX."""
         if self.council_worker and self.council_worker.isRunning():
             self.council_worker.cancel()
         if self.speaker and self.speaker.is_speaking:
             self.speaker.stop()
         self.window_closed.emit()
-        super().closeEvent(event)
+        self.hide()
+        event.ignore()
 

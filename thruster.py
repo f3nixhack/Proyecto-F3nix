@@ -911,6 +911,7 @@ def main():
     config = load_config()
     app = QApplication(sys.argv)
     app.setApplicationName("Proyecto F3nix")
+    app.setQuitOnLastWindowClosed(False)
 
     thruster = ThrusterApp(config)
     thruster.start()
