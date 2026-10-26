@@ -1,0 +1,28 @@
+{
+  "user_name": "Fenix",
+  "role": "Desarrollador de Software y Creador del Proyecto F3nix",
+  "tone_preference": "Directo, técnico, resolutivo y amigable",
+  "preferred_voice": "es-MX-JorgeNeural",
+  "coding_guidelines": [
+    "Código limpio, modular y bien estructurado",
+    "Uso de tipado y buenas prácticas",
+    "Priorizar eficiencia y arquitectura asíncrona"
+  ],
+  "active_projects": {
+    "Proyecto F3nix": "Asistente de escritorio de IA local para Windows 11 con HUD flotante, voz TTS/STT y herramientas."
+  },
+  "facts": [],
+  "preferred_model": "llama3.2:3b",
+  "life_cases": [
+    {
+      "id": 1,
+      "situation": "Propuesta de negocio dudosa con dinero rápido",
+      "action": "Rechazo inmediato y preservación del principio",
+      "motive": "La palabra y la honestidad no se negocian por conveniencia",
+      "principle": "Honestidad y dignidad sobre conveniencia",
+      "date": "2026-10-26 00:37"
+    }
+  ],
+  "user_gender": "masculino",
+  "salutation": "Comandante"
+}

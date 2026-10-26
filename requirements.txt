@@ -1,0 +1,10 @@
+PyQt6
+pygame
+SpeechRecognition
+pyaudio
+requests
+keyboard
+edge-tts
+duckduckgo-search
+psutil
+Pillow

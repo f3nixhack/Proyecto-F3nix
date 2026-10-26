@@ -1,0 +1,14 @@
+{
+  "ollama_url": "http://localhost:11434",
+  "model": "llama3.2:3b",
+  "fallback_model": "llama3.1",
+  "ptt_key": "f12",
+  "voice_tts": "es-MX-JorgeNeural",
+  "stt_language": "es-ES",
+  "avatar_image": "thruster_avatar.jpg",
+  "show_subtitles": true,
+  "volume": 1.0,
+  "voice_rate": "+18%",
+  "avatar_x": 1131,
+  "avatar_y": 555
+}
