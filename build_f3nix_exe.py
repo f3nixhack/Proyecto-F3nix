@@ -1,0 +1,68 @@
+import os
+import sys
+import shutil
+import subprocess
+
+def build():
+    print("=======================================================")
+    print("       🚀 COMPILADOR NATIVO F3NIX PARA WINDOWS 11      ")
+    print("=======================================================")
+    
+    # 1. Asegurar icono
+    icon_path = "f3nix_icon.ico"
+    if not os.path.exists(icon_path):
+        try:
+            from PIL import Image
+            img = Image.open("thruster_avatar.jpg")
+            img.save(icon_path, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+            print("✓ Icono f3nix_icon.ico generado exitosamente.")
+        except Exception as e:
+            print(f"Aviso generando icono: {e}")
+            icon_path = None
+
+    # 2. Configurar argumentos de PyInstaller
+    cmd = [
+        sys.executable, "-m", "PyInstaller",
+        "thruster.py",
+        "--name=F3NIX",
+        "--windowed",
+        "--clean",
+        "--noconfirm",
+        "--add-data=thruster_avatar.jpg;.",
+        "--add-data=core/constitution;core/constitution",
+        "--add-data=config.json;.",
+        "--add-data=f3nix_memory.json;.",
+        "--hidden-import=PyQt6",
+        "--hidden-import=pygame",
+        "--hidden-import=edge_tts",
+        "--hidden-import=keyboard",
+        "--hidden-import=sounddevice",
+        "--hidden-import=numpy",
+        "--hidden-import=requests"
+    ]
+
+    if icon_path and os.path.exists(icon_path):
+        cmd.append(f"--icon={icon_path}")
+
+    # Verificar si el usuario pasó --onefile
+    if "--onefile" in sys.argv:
+        cmd.append("--onefile")
+        print("📦 Modo de compilación: Archivo Único (F3NIX.exe)")
+    else:
+        cmd.append("--onedir")
+        print("⚡ Modo de compilación: Carpeta de Alto Rendimiento (F3NIX/F3NIX.exe)")
+
+    print(f"\nEjecutando PyInstaller...")
+    ret = subprocess.run(cmd)
+    
+    if ret.returncode == 0:
+        print("\n=======================================================")
+        print("   ✅ ¡COMPILACIÓN COMPLETADA EXITOSAMENTE!           ")
+        print("=======================================================")
+        dist_path = os.path.abspath("dist/F3NIX")
+        print(f"📂 Ubicación del ejecutable:\n   {dist_path}\\F3NIX.exe\n")
+    else:
+        print("\n❌ Error durante la compilación. Revisa los mensajes arriba.")
+
+if __name__ == "__main__":
+    build()
