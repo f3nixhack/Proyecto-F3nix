@@ -895,10 +895,12 @@ class ThrusterApp:
         self.listener.stop()
         self.speaker.stop()
         try:
-            self.studio.close()
+            self.hud.hide()
+            self.studio.hide()
         except Exception:
             pass
         QApplication.quit()
+        os._exit(0)
 
 def _global_exception_handler(exc_type, exc_value, exc_traceback):
     if issubclass(exc_type, KeyboardInterrupt):

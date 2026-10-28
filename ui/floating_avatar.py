@@ -159,11 +159,12 @@ class FloatingAvatar(QWidget):
         )
         self.tasks_btn.clicked.connect(self.toggle_tasks_panel)
 
-        self.studio_btn = QPushButton("⛶")
-        self.studio_btn.setFixedSize(18, 18)
-        self.studio_btn.setToolTip("Abrir F3NIX Studio (Workspace estilo Hermes Desktop)")
+        self.studio_btn = QPushButton("🏛️")
+        self.studio_btn.setFixedSize(20, 18)
+        self.studio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.studio_btn.setToolTip("Abrir F3NIX Studio & Mesa Redonda (Workspace)")
         self.studio_btn.setStyleSheet(
-            "QPushButton { background: rgba(0, 229, 255, 0.15); color: #00E5FF; border: 1px solid rgba(0, 229, 255, 0.4); border-radius: 9px; font-weight: bold; font-size: 10px; padding: 0; }"
+            "QPushButton { background: rgba(0, 229, 255, 0.2); color: #00E5FF; border: 1px solid rgba(0, 229, 255, 0.6); border-radius: 9px; font-size: 11px; padding: 0; }"
             "QPushButton:hover { background: #00E5FF; color: #000000; }"
         )
         self.studio_btn.clicked.connect(self.toggle_studio_requested.emit)
@@ -193,6 +194,17 @@ class FloatingAvatar(QWidget):
         self.brain_badge_label.setToolTip("Cerebro activo (Smart Router)")
         self.brain_badge_label.setStyleSheet("font-size: 11px; padding: 0 2px;")
 
+        # Botón para Cerrar F3NIX por completo
+        self.close_app_btn = QPushButton("✕")
+        self.close_app_btn.setFixedSize(18, 18)
+        self.close_app_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_app_btn.setToolTip("Cerrar F3NIX por completo")
+        self.close_app_btn.setStyleSheet(
+            "QPushButton { background: rgba(255, 82, 82, 0.2); color: #FF5252; border: 1px solid rgba(255, 82, 82, 0.5); border-radius: 9px; font-weight: bold; font-size: 11px; padding: 0; }"
+            "QPushButton:hover { background: #FF5252; color: #FFFFFF; border-color: #FF5252; }"
+        )
+        self.close_app_btn.clicked.connect(self.quit_requested.emit)
+
         title_row.addWidget(self.title_label)
         title_row.addWidget(self.help_btn)
         title_row.addWidget(self.vision_btn)
@@ -201,6 +213,7 @@ class FloatingAvatar(QWidget):
         title_row.addWidget(self.studio_btn)
         title_row.addWidget(self.mini_mode_btn)
         title_row.addWidget(self.brain_badge_label)
+        title_row.addWidget(self.close_app_btn)
 
         title_row.addStretch()
 
@@ -209,15 +222,15 @@ class FloatingAvatar(QWidget):
 
         self.hints_list = [
             "Mantén F12 para hablar",
+            "💡 Doble clic en el avatar para abrir F3NIX Studio",
+            "💡 Clic en [🏛️] para abrir Mesa Redonda y Studio",
+            "💡 Clic en [✕] para cerrar el programa por completo",
+            "💡 Clic derecho para ver todos los ajustes y opciones",
             "💡 Clic en [🔮] para activar Modo Mini-Orbe Zen",
-            "💡 Clic en [⛶] para abrir F3NIX Studio",
             "💡 Di 'Dame mi reporte' para tu briefing matutino",
             "💡 Di 'Activa modo programación' o 'modo enfoque'",
             "💡 Di 'Qué ventana tengo abierta' para ver tu app actual",
-            "💡 Di 'Historial de portapapeles' para ver tus copias",
-            "💡 Di 'Recuerda que...' o habla naturalmente (Auto-Memoria)",
-            "💡 Copia código con Ctrl+C y di 'Explica esto'",
-            "💡 Haz clic en [?] para ver la guía completa"
+            "💡 Di 'Historial de portapapeles' para ver tus copias"
         ]
         self.current_hint_idx = 0
         self.hint_label = QLabel(self.hints_list[0])
@@ -534,13 +547,13 @@ class FloatingAvatar(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, event):
-        """Doble clic sobre el avatar abre el Centro de Comando o restaura modo Mini-Orbe."""
+        """Doble clic sobre el avatar abre F3NIX Studio / Mesa Redonda o restaura modo Mini-Orbe."""
         if getattr(self, "is_mini_mode", False):
             self.toggle_mini_mode()
             event.accept()
             return
         if event.button() == Qt.MouseButton.LeftButton:
-            self.open_command_deck_requested.emit()
+            self.toggle_studio_requested.emit()
             event.accept()
 
     def _rotate_hint(self):
@@ -562,7 +575,7 @@ class FloatingAvatar(QWidget):
         menu.addSeparator()
 
         # F3NIX Studio (Hermes Desktop Workspace)
-        studio_act = menu.addAction("⛶ Abrir F3NIX Studio (Workspace)")
+        studio_act = menu.addAction("🏛️ Abrir F3NIX Studio / Mesa Redonda")
         launcher_act = menu.addAction("🔍 Barra Rápida Global (Alt + F)")
         mini_act = menu.addAction("🔮 Modo Mini-Orbe Zen" if not getattr(self, "is_mini_mode", False) else "🔮 Expandir HUD Completo")
         is_turbo = getattr(self, "turbo_mode", True)
@@ -621,7 +634,7 @@ class FloatingAvatar(QWidget):
         clear_hist_act = menu.addAction("Reiniciar Conversación")
         menu.addSeparator()
 
-        quit_act = menu.addAction("Cerrar Asistente")
+        quit_act = menu.addAction("❌ Cerrar F3NIX (Salir por completo)")
 
         action = menu.exec(QCursor.pos())
 
