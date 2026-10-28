@@ -41,7 +41,8 @@ def build():
         "--hidden-import=keyboard",
         "--hidden-import=sounddevice",
         "--hidden-import=numpy",
-        "--hidden-import=requests"
+        "--hidden-import=requests",
+        "--distpath=release"
     ]
 
     if icon_path and os.path.exists(icon_path):
@@ -62,7 +63,26 @@ def build():
         print("\n=======================================================")
         print("   ✅ ¡COMPILACIÓN COMPLETADA EXITOSAMENTE!           ")
         print("=======================================================")
-        dist_path = os.path.abspath("dist/F3NIX")
+        dist_path = os.path.abspath("release/F3NIX")
+        exe_path = os.path.join(dist_path, "F3NIX.exe")
+        print(f"📂 Ubicación del ejecutable:\n   {exe_path}\n")
+
+        # Actualizar acceso directo en el Escritorio automáticamente
+        try:
+            import win32com.client
+            wscript = win32com.client.Dispatch("WScript.Shell")
+            desktop = wscript.SpecialFolders("Desktop")
+            shortcut_path = os.path.join(desktop, "F3NIX.lnk")
+            if os.path.exists(exe_path):
+                sc = wscript.CreateShortcut(shortcut_path)
+                sc.TargetPath = exe_path
+                sc.WorkingDirectory = dist_path
+                sc.IconLocation = f"{exe_path},0"
+                sc.Description = "F3NIX - Asistente de Escritorio IA"
+                sc.Save()
+                print(f"✓ Acceso directo actualizado en tu Escritorio: {shortcut_path}")
+        except Exception as e:
+            print(f"Aviso creando acceso directo: {e}")
         print(f"📂 Ubicación del ejecutable:\n   {dist_path}\\F3NIX.exe\n")
     else:
         print("\n❌ Error durante la compilación. Revisa los mensajes arriba.")
