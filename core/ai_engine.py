@@ -309,6 +309,36 @@ class AIEngine:
             self._log_activity("Herramientas", "Lanzamiento de App", app_target)
             return F3nixTools.open_application(app_target)
 
+        # 5b. Piloto Automático: Sincronización con GitHub
+        github_triggers = [
+            "sube a github", "subir a github", "sube el código a github", "subir el código a github",
+            "sube mi código a github", "sube los cambios a github", "sincroniza con github",
+            "sincronizar con github", "haz git push", "git push", "actualiza el repositorio",
+            "subir cambios a github"
+        ]
+        if any(gt in p_lower for gt in github_triggers):
+            commit_msg = None
+            msg_match = re.search(r'(?:con mensaje|mensaje|comentario)\s+["«\']?([^"»\']+)["«\']?', prompt, re.IGNORECASE)
+            if msg_match:
+                commit_msg = msg_match.group(1).strip()
+            self._log_activity("Piloto Automático", "GitHub Sync", commit_msg or "Automático")
+            return F3nixTools.sync_github(commit_message=commit_msg)
+
+        # 5c. Piloto Automático: Crear carpetas en el escritorio
+        folder_triggers = [
+            "crea una carpeta en el escritorio llamada", "crear una carpeta en el escritorio llamada",
+            "crea una carpeta en el escritorio", "crear carpeta en el escritorio",
+            "crea una carpeta llamada", "crear una carpeta llamada"
+        ]
+        for ft in folder_triggers:
+            if ft in p_lower:
+                idx = p_lower.find(ft)
+                folder_name = prompt[idx + len(ft):].strip(" :,-'\"«»")
+                if not folder_name:
+                    folder_name = "Nueva_Carpeta_F3NIX"
+                self._log_activity("Piloto Automático", "Crear Carpeta", folder_name)
+                return F3nixTools.create_desktop_folder(folder_name)
+
         # 6. Crear notas en el escritorio de Windows
         note_triggers = [
             "crea una nota en el escritorio", "crear nota en el escritorio",

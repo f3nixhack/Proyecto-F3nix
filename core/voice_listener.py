@@ -22,6 +22,7 @@ class VoiceListener(QObject):
     stop_listening_signal = pyqtSignal()
     transcription_ready = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
+    hands_free_changed = pyqtSignal(bool)
 
     def __init__(
         self,
@@ -46,6 +47,14 @@ class VoiceListener(QObject):
         self._running = False
         self._audio_frames = []
         self._thread: Optional[threading.Thread] = None
+        self._hf_thread: Optional[threading.Thread] = None
+
+        # Parámetros de Modo Manos Libres y VAD
+        self.hands_free: bool = False
+        self.barge_in_callback: Optional[Callable[[], None]] = None
+        self.is_speaking_checker: Optional[Callable[[], bool]] = None
+        self.rms_threshold: int = 750
+        self.silence_limit_seconds: float = 1.2
 
         # Parámetros de audio
         self.chunk_size = 1024
@@ -63,8 +72,14 @@ class VoiceListener(QObject):
             logger.error(f"Error inicializando PyAudio: {e}")
             self._pa = None
 
+    def set_hands_free(self, enabled: bool):
+        """Activa o desactiva la escucha continua manos libres con detección de voz (VAD)."""
+        self.hands_free = enabled
+        logger.info(f"Modo Manos Libres {'ACTIVADO' if enabled else 'DESACTIVADO'}")
+        self.hands_free_changed.emit(enabled)
+
     def start(self):
-        """Inicia el monitoreo de la tecla de Push-to-Talk en un hilo en segundo plano."""
+        """Inicia el monitoreo de la tecla PTT y el hilo de manos libres en segundo plano."""
         if self._running:
             return
         if not self._pa:
@@ -72,6 +87,8 @@ class VoiceListener(QObject):
         self._running = True
         self._thread = threading.Thread(target=self._key_listener_loop, daemon=True)
         self._thread.start()
+        self._hf_thread = threading.Thread(target=self._hands_free_loop, daemon=True)
+        self._hf_thread.start()
         logger.info(f"Escuchador Push-to-Talk iniciado en tecla: {self.ptt_key.upper()}")
 
     def stop(self):
@@ -84,6 +101,122 @@ class VoiceListener(QObject):
             except Exception:
                 pass
             self._pa = None
+
+    @staticmethod
+    def _calc_rms(data: bytes) -> int:
+        try:
+            import audioop
+            return audioop.rms(data, 2)
+        except Exception:
+            import struct, math
+            count = len(data) // 2
+            if count == 0:
+                return 0
+            shorts = struct.unpack(f"<{count}h", data)
+            sum_sq = sum(s * s for s in shorts)
+            return int(math.sqrt(sum_sq / count))
+
+    def _hands_free_loop(self):
+        """Ciclo continuo de detección de voz humana (VAD) y soporte para interrupción al hablar (barge-in)."""
+        stream = None
+        while self._running:
+            if not self.hands_free:
+                if stream:
+                    try:
+                        stream.stop_stream()
+                        stream.close()
+                    except Exception:
+                        pass
+                    stream = None
+                time.sleep(0.2)
+                continue
+
+            if not self._pa:
+                self._init_pyaudio()
+                if not self._pa:
+                    time.sleep(1.0)
+                    continue
+
+            if stream is None:
+                try:
+                    stream = self._pa.open(
+                        format=self.audio_format,
+                        channels=self.channels,
+                        rate=self.sample_rate,
+                        input=True,
+                        frames_per_buffer=self.chunk_size
+                    )
+                except Exception as ex:
+                    logger.error(f"Error abriendo stream para manos libres: {ex}")
+                    time.sleep(1.0)
+                    continue
+
+            is_speaking_now = False
+            speaking_frames = []
+            last_sound_time = time.time()
+
+            try:
+                while self._running and self.hands_free:
+                    data = stream.read(self.chunk_size, exception_on_overflow=False)
+                    rms = self._calc_rms(data)
+
+                    # Interrupción al hablar (Barge-In) si el asistente está respondiendo
+                    if self.is_speaking_checker and self.is_speaking_checker():
+                        if rms > 1600:
+                            if self.barge_in_callback:
+                                self.barge_in_callback()
+                        continue
+
+                    # Detección de voz activa
+                    if rms > self.rms_threshold:
+                        if not is_speaking_now:
+                            is_speaking_now = True
+                            self.is_recording = True
+                            speaking_frames = [data]
+                            self.start_listening_signal.emit()
+                            if self.on_start_listening:
+                                try:
+                                    self.on_start_listening()
+                                except Exception:
+                                    pass
+                        else:
+                            speaking_frames.append(data)
+                        last_sound_time = time.time()
+                    else:
+                        if is_speaking_now:
+                            speaking_frames.append(data)
+                            # Silencio sostenido -> fin de frase
+                            if time.time() - last_sound_time > self.silence_limit_seconds:
+                                is_speaking_now = False
+                                self.is_recording = False
+                                self.stop_listening_signal.emit()
+                                if self.on_stop_listening:
+                                    try:
+                                        self.on_stop_listening()
+                                    except Exception:
+                                        pass
+                                frames_to_process = list(speaking_frames)
+                                speaking_frames = []
+                                threading.Thread(target=self._transcribe_worker, args=(frames_to_process,), daemon=True).start()
+                                time.sleep(0.35)
+
+            except Exception as stream_err:
+                logger.error(f"Excepción en captura de manos libres: {stream_err}")
+                if stream:
+                    try:
+                        stream.stop_stream()
+                        stream.close()
+                    except Exception:
+                        pass
+                    stream = None
+                time.sleep(0.5)
+
+        if stream:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
 
     def _key_listener_loop(self):
         """Ciclo continuo que vigila el estado de la tecla PTT."""

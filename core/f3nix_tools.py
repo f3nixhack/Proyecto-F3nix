@@ -286,7 +286,17 @@ class F3nixTools:
             "bloc de notas": "notepad",
             "notepad": "notepad",
             "calculadora": "calc",
-            "explorador": "explorer"
+            "explorador": "explorer",
+            "spotify": "start spotify:",
+            "telegram": "start telegram:",
+            "whatsapp": "start whatsapp:",
+            "word": "winword",
+            "excel": "excel",
+            "paint": "mspaint",
+            "administrador de tareas": "taskmgr",
+            "task manager": "taskmgr",
+            "configuracion": "start ms-settings:",
+            "configuración": "start ms-settings:"
         }
 
         for key, cmd in common_apps.items():
@@ -298,6 +308,76 @@ class F3nixTools:
                     return f"No pude iniciar la aplicación: {e}"
 
         return f"No reconozco la aplicación {app_name} para apertura automática."
+
+    @staticmethod
+    def create_desktop_folder(folder_name: str) -> str:
+        """Crea una carpeta en el escritorio de Windows."""
+        try:
+            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            if not os.path.exists(desktop):
+                onedrive_desktop = os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop")
+                if os.path.exists(onedrive_desktop):
+                    desktop = onedrive_desktop
+                else:
+                    desktop = os.path.expanduser("~")
+
+            clean_name = re.sub(r'[\\/*?:"<>|]', "", folder_name).strip() or "Nueva_Carpeta"
+            target_path = os.path.join(desktop, clean_name)
+            os.makedirs(target_path, exist_ok=True)
+            return f"Carpeta '{clean_name}' creada exitosamente en tu escritorio."
+        except Exception as e:
+            logger.error(f"Error creando carpeta en escritorio: {e}")
+            return f"No se pudo crear la carpeta: {e}"
+
+    @staticmethod
+    def sync_github(commit_message: Optional[str] = None) -> str:
+        """
+        Piloto Automático: Sincroniza el código del proyecto actual con el repositorio remoto de GitHub.
+        Ejecuta git add, git commit y git push de forma segura y devuelve el resultado.
+        """
+        try:
+            # Verificar si git está instalado
+            version_res = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
+            if version_res.returncode != 0:
+                return "Git no está instalado o no se encuentra en el PATH del sistema."
+
+            # Verificar si estamos dentro de un repositorio git
+            repo_check = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], capture_output=True, text=True, timeout=5)
+            if repo_check.returncode != 0:
+                return "El directorio de trabajo actual no es un repositorio Git activo."
+
+            # Obtener rama actual
+            branch_res = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, timeout=5)
+            branch = branch_res.stdout.strip() or "main"
+
+            # Verificar estado de cambios
+            status_res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
+            status_out = status_res.stdout.strip()
+
+            msg = commit_message.strip() if commit_message and commit_message.strip() else f"Actualización automática por F3NIX ({datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})"
+
+            if status_out:
+                subprocess.run(["git", "add", "-A"], check=True, capture_output=True, text=True, timeout=20)
+                subprocess.run(["git", "commit", "-m", msg], check=True, capture_output=True, text=True, timeout=20)
+
+            # Push a remoto
+            push_res = subprocess.run(["git", "push", "origin", branch], capture_output=True, text=True, timeout=40)
+            if push_res.returncode != 0:
+                push_upstream = subprocess.run(["git", "push", "-u", "origin", branch], capture_output=True, text=True, timeout=40)
+                if push_upstream.returncode != 0:
+                    err_msg = push_upstream.stderr.strip() or push_res.stderr.strip()
+                    return f"Error al subir a GitHub: {err_msg[:200]}"
+
+            if status_out:
+                return f"Código sincronizado y subido con éxito a GitHub en la rama '{branch}'. Mensaje: «{msg}»."
+            else:
+                return f"El repositorio ya estaba limpio. Sincronización con GitHub completada en la rama '{branch}'."
+
+        except subprocess.TimeoutExpired:
+            return "Tiempo de espera agotado al conectar con GitHub. Comprueba tu conexión a Internet."
+        except Exception as e:
+            logger.error(f"Error sincronizando con GitHub: {e}")
+            return f"No se pudo completar la sincronización con GitHub: {e}"
 
     @staticmethod
     def create_desktop_note(title: str, content: str) -> str:

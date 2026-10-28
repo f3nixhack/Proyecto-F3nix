@@ -296,3 +296,112 @@ class VoiceSpeaker:
             pass
         self.is_speaking = False
 
+    def export_debate_podcast(
+        self,
+        turns: list,
+        output_path: str,
+        topic: str = "",
+        role_voices: Optional[dict] = None,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+        is_cancelled: Optional[Callable[[], bool]] = None
+    ) -> bool:
+        """
+        Exporta el debate completo de la Mesa Redonda como un podcast MP3 continuo.
+        Sintetiza la voz secuencial de cada rol participante (Álvaro, Jorge, Elvira, Dalia)
+        y ensambla los cuadros de audio MPEG en un archivo único de alta fidelidad.
+        """
+        if not turns:
+            logger.warning("No hay turnos para exportar en el podcast.")
+            return False
+
+        default_voices = {
+            "estratega": "es-ES-AlvaroNeural",
+            "critico": "es-ES-ElviraNeural",
+            "director": "es-MX-JorgeNeural",
+            "sendero_a": "es-ES-AlvaroNeural",
+            "sendero_b": "es-MX-DaliaNeural",
+            "cisne_negro": "es-ES-ElviraNeural",
+            "fisiologo": "es-ES-AlvaroNeural",
+            "traumatologo": "es-ES-ElviraNeural",
+            "arquitecto": "es-ES-AlvaroNeural",
+            "seguridad_qa": "es-ES-ElviraNeural",
+            "estoico": "es-MX-JorgeNeural",
+            "pragmatico": "es-ES-AlvaroNeural",
+            "defensor": "es-ES-AlvaroNeural",
+            "fiscal": "es-ES-ElviraNeural",
+            "juez": "es-MX-JorgeNeural"
+        }
+        active_role_voices = role_voices or {}
+
+        # Lista de segmentos: (texto, voz, etiqueta)
+        segments = []
+        if topic and topic.strip():
+            intro_text = f"Bienvenidos a la sesión de la Mesa Redonda F3NIX. Tema en deliberación: {topic.strip()}."
+            segments.append((intro_text, "es-MX-JorgeNeural", "Presentación F3NIX"))
+
+        for turn in turns:
+            role_id = turn.get("role", "estratega")
+            phase = turn.get("phase", "")
+            title = turn.get("title", "")
+            content = turn.get("content", "").strip()
+            if not content:
+                continue
+
+            voice = active_role_voices.get(role_id) or default_voices.get(role_id, "es-MX-JorgeNeural")
+            heading = phase or title or f"Turno de {role_id.capitalize()}"
+            clean = self.clean_text_for_speech(content)
+            speech_text = f"{heading}. {clean}"
+            segments.append((speech_text, voice, heading))
+
+        total_segments = len(segments)
+        if total_segments == 0:
+            return False
+
+        temp_files = []
+        try:
+            for idx, (text_chunk, voice, label) in enumerate(segments):
+                if is_cancelled and is_cancelled():
+                    logger.info("Exportación de podcast cancelada por el usuario.")
+                    return False
+
+                if on_progress:
+                    try:
+                        on_progress(idx, total_segments, f"Sintetizando: {label} ({idx+1}/{total_segments})")
+                    except Exception:
+                        pass
+
+                temp_f = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                temp_p = temp_f.name
+                temp_f.close()
+                temp_files.append(temp_p)
+
+                asyncio.run(self._generate_audio_file(text_chunk, temp_p, voice=voice))
+
+            # Concatenación binaria directa de tramas MP3
+            if on_progress:
+                try:
+                    on_progress(total_segments, total_segments, "Ensamblando Podcast MP3 definitivo...")
+                except Exception:
+                    pass
+
+            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            with open(output_path, "wb") as outfile:
+                for temp_p in temp_files:
+                    if os.path.exists(temp_p):
+                        with open(temp_p, "rb") as infile:
+                            outfile.write(infile.read())
+
+            logger.info(f"Podcast de Mesa Redonda exportado exitosamente a: {output_path}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error exportando podcast de debate: {e}")
+            return False
+        finally:
+            for temp_p in temp_files:
+                if os.path.exists(temp_p):
+                    try:
+                        os.remove(temp_p)
+                    except Exception:
+                        pass
+

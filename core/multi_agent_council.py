@@ -946,6 +946,146 @@ class MultiAgentCouncil:
         self.last_debate_results = results
         return results
 
+    CLOUD_PROVIDERS = {
+        "deepseek": {
+            "endpoint": "https://api.deepseek.com/chat/completions",
+            "env_key": "DEEPSEEK_API_KEY",
+            "cfg_key": "deepseek_api_key",
+            "default_model": "deepseek-chat"
+        },
+        "groq": {
+            "endpoint": "https://api.groq.com/openai/v1/chat/completions",
+            "env_key": "GROQ_API_KEY",
+            "cfg_key": "groq_api_key",
+            "default_model": "llama-3.3-70b-versatile"
+        },
+        "openrouter": {
+            "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+            "env_key": "OPENROUTER_API_KEY",
+            "cfg_key": "openrouter_api_key",
+            "default_model": "mistralai/mistral-large-2407"
+        }
+    }
+
+    def _is_cloud_model(self, model: str) -> bool:
+        m = (model or "").lower()
+        return (
+            m.startswith("api:") or
+            m.startswith("cloud:") or
+            any(k in m for k in ["deepseek", "groq", "openrouter"])
+        )
+
+    def _get_cloud_api_key(self, provider: str) -> Optional[str]:
+        info = self.CLOUD_PROVIDERS.get(provider, {})
+        env_k = info.get("env_key", f"{provider.upper()}_API_KEY")
+        cfg_k = info.get("cfg_key", f"{provider.lower()}_api_key")
+
+        key = os.environ.get(env_k)
+        if key:
+            return key.strip()
+
+        config_path = "config.json"
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    return cfg.get(cfg_k) or cfg.get("cloud_api_keys", {}).get(provider)
+            except Exception:
+                pass
+        return None
+
+    def _call_cloud_api(
+        self,
+        model: str,
+        system_prompt: str,
+        prompt: str,
+        on_token: Optional[Callable[[str], None]] = None,
+        is_cancelled: Optional[Callable[[], bool]] = None
+    ) -> str:
+        """Llama a proveedores externos en la nube (DeepSeek, Groq, OpenRouter) compatibles con OpenAI Chat API."""
+        clean_model = model.replace("api:", "").replace("cloud:", "").strip()
+        provider = "deepseek"
+        if "groq" in clean_model.lower():
+            provider = "groq"
+        elif "openrouter" in clean_model.lower():
+            provider = "openrouter"
+        elif "deepseek" in clean_model.lower():
+            provider = "deepseek"
+
+        provider_info = self.CLOUD_PROVIDERS.get(provider, self.CLOUD_PROVIDERS["deepseek"])
+        api_key = self._get_cloud_api_key(provider)
+
+        if ":" in clean_model:
+            target_model = clean_model.split(":", 1)[1]
+        else:
+            if clean_model in ["groq-llama-3.3-70b", "groq"]:
+                target_model = provider_info["default_model"]
+            elif clean_model in ["openrouter-mistral", "openrouter"]:
+                target_model = provider_info["default_model"]
+            elif clean_model in ["deepseek", "deepseek-v3"]:
+                target_model = "deepseek-chat"
+            else:
+                target_model = clean_model
+
+        if not api_key:
+            cfg_name = provider_info["cfg_key"]
+            env_name = provider_info["env_key"]
+            return (
+                f"[Aviso F3NIX - Invitado {provider.upper()}]: "
+                f"Para activar este cerebro externo ({target_model}), ingresa tu clave en 'config.json' "
+                f"(\"{cfg_name}\": \"tu_clave\") o como variable de entorno '{env_name}'."
+            )
+
+        endpoint = provider_info["endpoint"]
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": target_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "stream": True,
+            "temperature": 0.5 if getattr(self, "turbo_mode", False) else 0.7
+        }
+
+        full_content = []
+        try:
+            with requests.post(endpoint, json=payload, headers=headers, stream=True, timeout=120) as r:
+                if r.status_code != 200:
+                    return f"[Error {r.status_code} de {provider.upper()}]: {r.text[:300]}"
+
+                for line in r.iter_lines():
+                    if is_cancelled and is_cancelled():
+                        return "".join(full_content) + "\n[Debate cancelado por el usuario]"
+                    if not line:
+                        continue
+                    try:
+                        line_str = line.decode("utf-8")
+                        if line_str.startswith("data: "):
+                            chunk_raw = line_str[6:].strip()
+                            if chunk_raw == "[DONE]":
+                                break
+                            data = json.loads(chunk_raw)
+                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            chunk = delta.get("content", "")
+                            if chunk:
+                                full_content.append(chunk)
+                                if on_token:
+                                    on_token(chunk)
+                    except Exception:
+                        pass
+            return "".join(full_content).strip()
+        except requests.exceptions.Timeout:
+            return f"[Tiempo de espera]: La API de {provider.upper()} tardó demasiado en responder."
+        except requests.exceptions.ConnectionError:
+            return f"[Error de conexión]: No se pudo conectar con la API de {provider.upper()}."
+        except Exception as e:
+            logger.error(f"Error llamando a API Cloud ({target_model}): {e}")
+            return f"[Error inesperado con {target_model}]: {str(e)}"
+
     def _call_ollama(
         self,
         model: str,
@@ -954,7 +1094,10 @@ class MultiAgentCouncil:
         on_token: Optional[Callable[[str], None]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None
     ) -> str:
-        """Llama a la API de chat de Ollama con streaming en tiempo real y límites de tokens optimizados para CPU."""
+        """Llama a la API de chat de Ollama (o a APIs en la nube para invitados externos) con streaming en tiempo real."""
+        if self._is_cloud_model(model):
+            return self._call_cloud_api(model, system_prompt, prompt, on_token, is_cancelled)
+
         options = {
             "temperature": 0.5 if getattr(self, "turbo_mode", False) else 0.7,
             "num_predict": 280 if getattr(self, "turbo_mode", False) else 450,

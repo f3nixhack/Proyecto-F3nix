@@ -19,6 +19,57 @@ STATE_COLORS = {
     "alarm": QColor(255, 0, 128),       # Magenta / Neón (alarma/pomodoro cumplido)
 }
 
+AVATAR_THEMES = {
+    "cyberpunk": {
+        "name": "Cyan Cyberpunk (Original)",
+        "colors": {
+            "idle": QColor(0, 229, 255),
+            "listening": QColor(255, 46, 99),
+            "thinking": QColor(255, 183, 3),
+            "speaking": QColor(58, 134, 255),
+            "alarm": QColor(255, 0, 128)
+        },
+        "accent": "#00E5FF",
+        "bg_hud": "rgba(10, 18, 30, 0.94)"
+    },
+    "iron_man": {
+        "name": "Iron Man Arc Reactor (Oro & Carmesí)",
+        "colors": {
+            "idle": QColor(255, 215, 0),        # Oro
+            "listening": QColor(230, 20, 30),    # Carmesí
+            "thinking": QColor(255, 140, 0),    # Fuego
+            "speaking": QColor(255, 235, 150),  # Oro brillante
+            "alarm": QColor(255, 50, 50)
+        },
+        "accent": "#FFD700",
+        "bg_hud": "rgba(30, 12, 14, 0.94)"
+    },
+    "matrix": {
+        "name": "Matrix Hacker (Verde Terminal)",
+        "colors": {
+            "idle": QColor(0, 255, 102),        # Verde Neón
+            "listening": QColor(255, 50, 70),    # Alerta Roja
+            "thinking": QColor(160, 255, 0),    # Lima Hacker
+            "speaking": QColor(0, 230, 118),    # Verde Terminal
+            "alarm": QColor(255, 0, 80)
+        },
+        "accent": "#00FF66",
+        "bg_hud": "rgba(6, 24, 12, 0.94)"
+    },
+    "synthwave": {
+        "name": "Neon Synthwave (Fucsia & Púrpura)",
+        "colors": {
+            "idle": QColor(213, 0, 249),        # Violeta Neón
+            "listening": QColor(255, 23, 68),    # Rojo Neón
+            "thinking": QColor(255, 0, 128),    # Magenta
+            "speaking": QColor(0, 229, 255),    # Cyan Neón
+            "alarm": QColor(255, 110, 0)
+        },
+        "accent": "#D500F9",
+        "bg_hud": "rgba(24, 10, 34, 0.94)"
+    }
+}
+
 STATE_LABELS = {
     "idle": "En línea (F12)",
     "listening": "Escuchando...",
@@ -58,6 +109,9 @@ class FloatingAvatar(QWidget):
     quit_requested = pyqtSignal()
     position_changed = pyqtSignal(int, int)
     interrupt_requested = pyqtSignal()
+    skin_changed = pyqtSignal(str)
+    avatar_image_changed = pyqtSignal(str)
+    hands_free_toggled = pyqtSignal(bool)
 
     def __init__(self, avatar_path: str = "thruster_avatar.jpg"):
         super().__init__()
@@ -71,6 +125,9 @@ class FloatingAvatar(QWidget):
         self.active_model = ""
         self.current_voice = "es-MX-JorgeNeural"
         self.is_mini_mode = False
+        self.current_skin = "cyberpunk"
+        self.state_colors = dict(AVATAR_THEMES["cyberpunk"]["colors"])
+        self.hands_free_active = False
 
         # Habilitar arrastrar y soltar archivos directamente sobre el avatar
         self.setAcceptDrops(True)
@@ -465,12 +522,40 @@ class FloatingAvatar(QWidget):
             self.glow_step = 0.5
         self.update()
 
+    def get_state_color(self, state: str) -> QColor:
+        colors = getattr(self, "state_colors", STATE_COLORS)
+        return colors.get(state, colors.get("idle", STATE_COLORS["idle"]))
+
+    def apply_skin(self, skin_key: str):
+        """Aplica un tema visual / skin al HUD, orbe y animaciones del Avatar."""
+        if skin_key not in AVATAR_THEMES:
+            skin_key = "cyberpunk"
+        self.current_skin = skin_key
+        theme = AVATAR_THEMES[skin_key]
+        self.state_colors = dict(theme["colors"])
+        accent = theme["accent"]
+
+        if hasattr(self, "title_label"):
+            self.title_label.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {accent}; letter-spacing: 1px;")
+        if hasattr(self, "status_label"):
+            self.status_label.setStyleSheet(f"color: {self.get_state_color(self.current_state).name()}; font-size: 12px; font-weight: 600;")
+        self.skin_changed.emit(skin_key)
+        self.update()
+
+    def set_avatar_image(self, image_path: str):
+        """Cambia dinámicamente la imagen visual del avatar."""
+        if image_path and os.path.exists(image_path):
+            self.avatar_path = image_path
+            self._load_avatar()
+            self.avatar_image_changed.emit(image_path)
+            self.update()
+
     @pyqtSlot(str)
     def set_state(self, state: str):
-        if state in STATE_COLORS:
+        if state in STATE_LABELS or state in STATE_COLORS:
             self.current_state = state
-            color = STATE_COLORS[state].name()
-            self.status_label.setText(STATE_LABELS[state])
+            color = self.get_state_color(state).name()
+            self.status_label.setText(STATE_LABELS.get(state, state))
             self.status_label.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
             self.update()
 
@@ -628,6 +713,21 @@ class FloatingAvatar(QWidget):
             v_act = voice_menu.addAction(disp)
             voice_actions[v_act] = v_id
 
+        # Submenú de Skins y Personalización Visual
+        skin_menu = menu.addMenu("🎨 Skins & Apariencia")
+        skin_menu.setStyleSheet(menu.styleSheet())
+        skin_actions = {}
+        for s_key, s_data in AVATAR_THEMES.items():
+            disp = f"✓  {s_data['name']}" if s_key == getattr(self, "current_skin", "cyberpunk") else f"    {s_data['name']}"
+            s_act = skin_menu.addAction(disp)
+            skin_actions[s_act] = s_key
+        skin_menu.addSeparator()
+        change_avatar_img_act = skin_menu.addAction("🖼️ Cambiar Imagen de Avatar...")
+
+        # Modo Manos Libres continuo
+        is_hf = getattr(self, "hands_free_active", False)
+        hf_act = menu.addAction("🎙️ Modo Manos Libres: ACTIVO (Sin F12)" if is_hf else "🎙️ Activar Modo Manos Libres (Sin F12)")
+
         menu.addSeparator()
         clip_act = menu.addAction("📋 Analizar Portapapeles (Ctrl+C actual)")
         toggle_sub_act = menu.addAction("Ocultar Subtítulos" if self.show_subtitles else "Mostrar Subtítulos")
@@ -648,6 +748,27 @@ class FloatingAvatar(QWidget):
             self.current_voice = v_id
             self.voice_change_requested.emit(v_id)
             self.show_subtitle_message("Sistema", f"Voz cambiada a: {voices_catalog[v_id]}")
+        elif action in skin_actions:
+            chosen_skin = skin_actions[action]
+            self.apply_skin(chosen_skin)
+            self.show_subtitle_message("Sistema", f"Skin aplicado: {AVATAR_THEMES[chosen_skin]['name']}")
+        elif action == change_avatar_img_act:
+            from PyQt6.QtWidgets import QFileDialog
+            fpath, _ = QFileDialog.getOpenFileName(
+                self,
+                "Seleccionar Imagen para el Avatar",
+                "",
+                "Imágenes (*.png *.jpg *.jpeg *.bmp *.webp *.ico)"
+            )
+            if fpath:
+                self.set_avatar_image(fpath)
+                self.show_subtitle_message("Sistema", "Imagen de avatar actualizada")
+        elif action == hf_act:
+            new_hf = not getattr(self, "hands_free_active", False)
+            self.hands_free_active = new_hf
+            self.hands_free_toggled.emit(new_hf)
+            msg = "🎙️ Manos Libres ACTIVADO: habla directamente sin presionar F12" if new_hf else "🎙️ Manos Libres DESACTIVADO: mantén F12 para hablar"
+            self.show_subtitle_message("Sistema", msg)
         elif action == studio_act:
             self.toggle_studio_requested.emit()
         elif action == mini_act:
@@ -687,7 +808,7 @@ class FloatingAvatar(QWidget):
         center_y = 15 + self.avatar_size / 2.0
         radius = (self.avatar_size - 16) / 2.0
 
-        state_color = STATE_COLORS.get(self.current_state, STATE_COLORS["idle"])
+        state_color = self.get_state_color(self.current_state)
 
         # 1. Resplandor exterior (Glow ring)
         glow_grad = QRadialGradient(center_x, center_y, radius + self.glow_radius)

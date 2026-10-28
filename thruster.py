@@ -121,6 +121,17 @@ class ThrusterApp:
         self.listener.transcription_ready.connect(self.on_transcription_ready)
         self.listener.error_occurred.connect(self.on_listener_error)
 
+        # Configurar interrupción y detección de voz para manos libres
+        self.listener.barge_in_callback = self.speaker.stop
+        self.listener.is_speaking_checker = lambda: getattr(self.speaker, "is_speaking", False)
+
+        # Restaurar skin del avatar y modo manos libres
+        saved_skin = config.get("skin", "cyberpunk")
+        self.hud.apply_skin(saved_skin)
+        if config.get("hands_free", False):
+            self.hud.hands_free_active = True
+            self.listener.set_hands_free(True)
+
         # Conectar señales del HUD
         self.hud.clear_history_requested.connect(self.ai.clear_history)
         self.hud.quit_requested.connect(self.shutdown)
@@ -135,6 +146,9 @@ class ThrusterApp:
         self.hud.toggle_studio_requested.connect(self.toggle_studio)
         self.hud.open_doctor_requested.connect(self.open_environment_doctor)
         self.hud.position_changed.connect(self.on_avatar_position_changed)
+        self.hud.skin_changed.connect(self.on_skin_changed)
+        self.hud.avatar_image_changed.connect(self.on_avatar_image_changed)
+        self.hud.hands_free_toggled.connect(self.on_hands_free_toggled)
         self.hud.interrupt_requested.connect(self.interrupt_ai)
 
         # Conectar señales del Studio
@@ -276,6 +290,28 @@ class ThrusterApp:
         self.config["avatar_x"] = x
         self.config["avatar_y"] = y
         save_config(self.config)
+
+    def on_skin_changed(self, skin_key: str):
+        """Persiste el skin visual seleccionado para el HUD."""
+        self.config["skin"] = skin_key
+        save_config(self.config)
+        if hasattr(self, "studio") and self.studio:
+            self.studio.log_activity("Personalización", "Skin de Avatar Cambiado", skin_key)
+
+    def on_avatar_image_changed(self, img_path: str):
+        """Persiste la nueva imagen personalizada del avatar."""
+        self.config["avatar_image"] = img_path
+        save_config(self.config)
+        if hasattr(self, "studio") and self.studio:
+            self.studio.log_activity("Personalización", "Imagen de Avatar Actualizada", os.path.basename(img_path))
+
+    def on_hands_free_toggled(self, enabled: bool):
+        """Persiste el estado de manos libres y actualiza el escuchador."""
+        self.listener.set_hands_free(enabled)
+        self.config["hands_free"] = enabled
+        save_config(self.config)
+        if hasattr(self, "studio") and self.studio:
+            self.studio.log_activity("Sistema", "Modo Manos Libres", "Activado" if enabled else "Desactivado")
 
     def on_global_esc_pressed(self):
         """Atajo global Esc: interrumpe a F3NIX si está hablando o procesando."""

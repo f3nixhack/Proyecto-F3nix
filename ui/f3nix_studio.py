@@ -1791,6 +1791,31 @@ class F3nixStudio(QMainWindow):
         """)
         self.btn_export_pdf.clicked.connect(self._export_council_to_pdf)
 
+        self.btn_export_podcast = QPushButton("🎙️ Podcast MP3")
+        self.btn_export_podcast.setEnabled(False)
+        self.btn_export_podcast.setFixedHeight(32)
+        self.btn_export_podcast.setToolTip("Exporta el debate completo a un podcast de audio MP3 continuo de alta calidad")
+        self.btn_export_podcast.setStyleSheet("""
+            QPushButton {
+                background-color: #211232;
+                color: #D500F9;
+                border: 1px solid #4C1D6B;
+                font-weight: bold;
+                font-size: 11px;
+                padding: 0 10px;
+            }
+            QPushButton:hover {
+                background-color: #361754;
+                border-color: #E040FB;
+            }
+            QPushButton:disabled {
+                background-color: #170E20;
+                color: #553D68;
+                border-color: #271638;
+            }
+        """)
+        self.btn_export_podcast.clicked.connect(self._export_council_to_podcast)
+
         self.btn_clear_debate = QPushButton("🗑 Limpiar")
         self.btn_clear_debate.setFixedHeight(32)
         self.btn_clear_debate.clicked.connect(self._clear_council_display)
@@ -1800,6 +1825,7 @@ class F3nixStudio(QMainWindow):
         action_row.addWidget(self.btn_stop_debate)
         action_row.addWidget(self.btn_save_council_memory)
         action_row.addWidget(self.btn_export_pdf)
+        action_row.addWidget(self.btn_export_podcast)
         action_row.addWidget(self.btn_clear_debate)
 
         btn_box.addLayout(action_row)
@@ -1973,6 +1999,32 @@ class F3nixStudio(QMainWindow):
                         self.log_activity("Mesa Redonda", f"Modelo {role.capitalize()}", model_val)
                     return handler
                 action.triggered.connect(make_handler(m))
+
+        # Sección de Invitados Cloud (API)
+        menu.addSeparator()
+        cloud_header = menu.addAction("─── 🌐 Invitados Cloud (API) ───")
+        cloud_header.setEnabled(False)
+        cloud_guests = [
+            ("DeepSeek-V3", "api:deepseek-chat"),
+            ("DeepSeek-R1 (Razonador)", "api:deepseek-reasoner"),
+            ("Groq Llama-3.3 70B", "api:groq:llama-3.3-70b-versatile"),
+            ("OpenRouter Mistral Large", "api:openrouter:mistralai/mistral-large-2407")
+        ]
+        for label, model_id in cloud_guests:
+            prefix = "✓ " if current_model == model_id else "   "
+            act = menu.addAction(f"{prefix}🌐 {label}")
+            def make_cloud_handler(m_val=model_id):
+                def handler():
+                    idx = combo.findText(m_val)
+                    if idx >= 0:
+                        combo.setCurrentIndex(idx)
+                    else:
+                        combo.addItem(m_val)
+                        combo.setCurrentText(m_val)
+                    self._update_role_chips_text()
+                    self.log_activity("Mesa Redonda", f"Modelo {role.capitalize()}", m_val)
+                return handler
+            act.triggered.connect(make_cloud_handler(model_id))
 
         menu.exec(button.mapToGlobal(QPoint(0, button.height() + 2)))
 
@@ -2847,9 +2899,91 @@ class F3nixStudio(QMainWindow):
             logger.error(f"Error exportando debate a PDF: {e}")
             QMessageBox.critical(self, "Error de Exportación", f"Ocurrió un error al exportar el debate a PDF:\n{e}")
 
-        except Exception as e:
-            logger.error(f"Error exportando debate a PDF: {e}")
-            QMessageBox.critical(self, "Error de Exportación", f"Ocurrió un error al exportar el debate a PDF:\n{e}")
+    def _export_council_to_podcast(self):
+        """Exporta la deliberación completa de la Mesa Redonda a un podcast continuo de audio MP3."""
+        turns = getattr(self, "_debate_turns_history", [])
+        if not turns:
+            QMessageBox.warning(self, "Sin Contenido", "No hay ningún debate activo o completado para exportar a Podcast MP3.")
+            return
+
+        if not self.speaker:
+            QMessageBox.warning(self, "Motor de Voz", "El motor de síntesis de voz no está disponible.")
+            return
+
+        topic = getattr(self, "_debate_topic", "").strip() or "Consulta sin título"
+        clean_name = re.sub(r'[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ_-]', '_', topic[:32]).strip('_')
+        date_stamp = datetime.now().strftime("%Y%m%d_%H%M")
+        default_filename = f"Podcast_F3NIX_{clean_name}_{date_stamp}.mp3"
+
+        music_dir = os.path.join(os.path.expanduser("~"), "Music")
+        if not os.path.exists(music_dir):
+            music_dir = os.path.join(os.path.expanduser("~"), "Documents")
+        suggested_path = os.path.join(music_dir, default_filename)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar Podcast de Mesa Redonda en MP3",
+            suggested_path,
+            "Archivos de Audio MP3 (*.mp3)"
+        )
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".mp3"):
+            file_path += ".mp3"
+
+        # Normalizar lista de turnos
+        norm_turns = []
+        for t in turns:
+            item = dict(t)
+            if "content" not in item and "reply" in item:
+                item["content"] = item["reply"]
+            norm_turns.append(item)
+
+        role_voices = self._get_council_role_voices(getattr(self, "current_council_mode", "clasico"))
+
+        progress = QProgressDialog("Inicializando sintetizador de podcast...", "Cancelar", 0, len(norm_turns) + 1, self)
+        progress.setWindowTitle("🎙️ Exportando Podcast MP3 F3NIX")
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        def on_progress(cur, total, msg):
+            from PyQt6.QtCore import QMetaObject, Q_ARG
+            QMetaObject.invokeMethod(progress, "setLabelText", Qt.ConnectionType.QueuedConnection, Q_ARG(str, msg))
+            QMetaObject.invokeMethod(progress, "setValue", Qt.ConnectionType.QueuedConnection, Q_ARG(int, cur))
+
+        def worker():
+            ok = self.speaker.export_debate_podcast(
+                turns=norm_turns,
+                output_path=file_path,
+                topic=topic,
+                role_voices=role_voices,
+                on_progress=on_progress,
+                is_cancelled=progress.wasCanceled
+            )
+            from PyQt6.QtCore import QMetaObject
+            QMetaObject.invokeMethod(progress, "close", Qt.ConnectionType.QueuedConnection)
+
+            if ok and not progress.wasCanceled():
+                self.log_activity("Mesa Redonda", "Podcast MP3 Exportado", os.path.basename(file_path))
+                from PyQt6.QtCore import QTimer
+                def show_success():
+                    res = QMessageBox.question(
+                        self,
+                        "Podcast MP3 Generado",
+                        f"El debate ha sido exportado exitosamente como Podcast MP3 en:\n\n{file_path}\n\n¿Deseas reproducirlo ahora?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
+                    if res == QMessageBox.StandardButton.Yes:
+                        try:
+                            os.startfile(file_path)
+                        except Exception:
+                            pass
+                QTimer.singleShot(150, show_success)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
 
     def _open_council_guide(self):
         """Abre la ventana interactiva que explica qué IA es mejor para cada rol y por qué."""
@@ -3131,6 +3265,8 @@ class F3nixStudio(QMainWindow):
         self.btn_save_council_memory.setEnabled(False)
         if hasattr(self, "btn_export_pdf"):
             self.btn_export_pdf.setEnabled(False)
+        if hasattr(self, "btn_export_podcast"):
+            self.btn_export_podcast.setEnabled(False)
 
         # Repliega automáticamente el panel detallado si estaba abierto para dar todo el espacio al debate
         if hasattr(self, "config_details_box") and not self.config_details_box.isHidden():
@@ -3181,6 +3317,10 @@ class F3nixStudio(QMainWindow):
         if getattr(self, "_debate_turns_history", []):
             if hasattr(self, "btn_export_pdf"):
                 self.btn_export_pdf.setEnabled(True)
+            if hasattr(self, "btn_export_podcast"):
+                self.btn_export_podcast.setEnabled(True)
+            if hasattr(self, "btn_export_podcast"):
+                self.btn_export_podcast.setEnabled(True)
         self.intervention_frame.setVisible(False)
         self._current_turn_data = None
         self._debate_interrupted_banner = True
@@ -3231,6 +3371,8 @@ class F3nixStudio(QMainWindow):
             self.btn_save_council_memory.setEnabled(True)
             if hasattr(self, "btn_export_pdf"):
                 self.btn_export_pdf.setEnabled(True)
+            if hasattr(self, "btn_export_podcast"):
+                self.btn_export_podcast.setEnabled(True)
             self.intervention_frame.setVisible(False)
             self._current_turn_data = None
             self._debate_completed_banner = True
@@ -3535,6 +3677,8 @@ class F3nixStudio(QMainWindow):
         self.btn_save_council_memory.setEnabled(False)
         if hasattr(self, "btn_export_pdf"):
             self.btn_export_pdf.setEnabled(False)
+        if hasattr(self, "btn_export_podcast"):
+            self.btn_export_podcast.setEnabled(False)
         self.council_status_badge.setText("⚪ Inactivo")
         self.council_status_badge.setStyleSheet("font-size: 11px; color: #8C99B2; background: #0E1521; padding: 3px 10px; border-radius: 10px; border: 1px solid #1E2738;")
 
