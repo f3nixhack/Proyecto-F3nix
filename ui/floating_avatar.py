@@ -483,10 +483,47 @@ class FloatingAvatar(QWidget):
             self.text_input.clear()
             self.text_submitted.emit(txt)
 
+    def _resolve_image_path(self, path: str) -> str:
+        """Resuelve la ruta absoluta del archivo de imagen asegurando soporte para PyInstaller (_internal / sys._MEIPASS)."""
+        if not path:
+            return ""
+        if os.path.isabs(path) and os.path.exists(path):
+            return path
+        # 1. Chequeo de bundle PyInstaller
+        if hasattr(sys, "_MEIPASS"):
+            p = os.path.join(sys._MEIPASS, path)
+            if os.path.exists(p):
+                return p
+            p_int = os.path.join(sys._MEIPASS, "_internal", path)
+            if os.path.exists(p_int):
+                return p_int
+
+        # 2. Directorio del ejecutable o script
+        exe_dir = os.path.dirname(sys.executable)
+        curr_dir = os.path.dirname(os.path.abspath(__file__))
+        for base in [
+            exe_dir,
+            os.path.join(exe_dir, "_internal"),
+            os.getcwd(),
+            os.path.join(os.getcwd(), "_internal"),
+            curr_dir,
+            os.path.abspath(os.path.join(curr_dir, "..")),
+            os.path.abspath(os.path.join(curr_dir, "..", "_internal")),
+            os.path.abspath(os.path.join(curr_dir, "..", "release", "F3NIX")),
+            os.path.abspath(os.path.join(curr_dir, "..", "release", "F3NIX", "_internal")),
+            os.path.abspath(os.path.join(curr_dir, "..", "dist", "F3NIX")),
+            os.path.abspath(os.path.join(curr_dir, "..", "dist", "F3NIX", "_internal")),
+        ]:
+            cand = os.path.join(base, path)
+            if os.path.exists(cand):
+                return os.path.abspath(cand)
+        return path
+
     def _load_avatar(self):
         self.avatar_pixmap = None
-        if os.path.exists(self.avatar_path):
-            pix = QPixmap(self.avatar_path)
+        real_path = self._resolve_image_path(self.avatar_path)
+        if real_path and os.path.exists(real_path):
+            pix = QPixmap(real_path)
             if not pix.isNull():
                 self.avatar_pixmap = pix.scaled(
                     self.avatar_size, self.avatar_size,

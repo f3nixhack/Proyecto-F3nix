@@ -212,8 +212,9 @@ class ThrusterApp:
         try:
             if not QSystemTrayIcon.isSystemTrayAvailable():
                 return
-            avatar_path = self.config.get("avatar_image", "thruster_avatar.jpg")
-            if os.path.exists(avatar_path):
+            avatar_raw = self.config.get("avatar_image", "thruster_avatar.jpg")
+            avatar_path = self.hud._resolve_image_path(avatar_raw) if hasattr(self.hud, "_resolve_image_path") else avatar_raw
+            if avatar_path and os.path.exists(avatar_path):
                 tray_icon = QIcon(avatar_path)
             else:
                 tray_icon = self.hud.windowIcon()

@@ -67,6 +67,25 @@ def build():
         exe_path = os.path.join(dist_path, "F3NIX.exe")
         print(f"📂 Ubicación del ejecutable:\n   {exe_path}\n")
 
+        # Asegurar copia directa de assets en la raíz de release y dist
+        for asset in ["thruster_avatar.jpg", "f3nix_icon.ico", "config.json", "f3nix_memory.json"]:
+            if os.path.exists(asset):
+                for target_dir in ["release/F3NIX", "dist/F3NIX"]:
+                    if os.path.exists(target_dir):
+                        try:
+                            shutil.copy2(asset, os.path.join(target_dir, asset))
+                            print(f"✓ {asset} copiado en {target_dir}")
+                        except Exception as copy_err:
+                            pass
+
+        # Sincronizar exe a dist/F3NIX si existe
+        if os.path.exists("dist/F3NIX") and os.path.exists(exe_path):
+            try:
+                shutil.copy2(exe_path, os.path.join("dist/F3NIX", "F3NIX.exe"))
+                print("✓ F3NIX.exe sincronizado en dist/F3NIX/")
+            except Exception as dist_err:
+                pass
+
         # Actualizar acceso directo en el Escritorio automáticamente
         try:
             import win32com.client
