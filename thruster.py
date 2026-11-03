@@ -125,12 +125,20 @@ class ThrusterApp:
         self.listener.barge_in_callback = self.speaker.stop
         self.listener.is_speaking_checker = lambda: getattr(self.speaker, "is_speaking", False)
 
-        # Restaurar skin del avatar y modo manos libres
+        # Restaurar skin del avatar, modo manos libres y modo charla amigo
         saved_skin = config.get("skin", "cyberpunk")
         self.hud.apply_skin(saved_skin)
         if config.get("hands_free", False):
             self.hud.hands_free_active = True
             self.listener.set_hands_free(True)
+        if config.get("friend_mode", False):
+            self.hud.is_friend_mode = True
+            if hasattr(self.hud, "friend_chat_btn"):
+                self.hud.friend_chat_btn.setStyleSheet(
+                    "QPushButton { background: #FFB703; color: #000000; border: 1px solid #FFA000; border-radius: 9px; font-size: 10px; font-weight: bold; padding: 0; }"
+                    "QPushButton:hover { background: #FFC107; color: #000000; }"
+                )
+            self.ai.set_friend_mode(True)
 
         # Conectar señales del HUD
         self.hud.clear_history_requested.connect(self.ai.clear_history)
@@ -149,6 +157,7 @@ class ThrusterApp:
         self.hud.skin_changed.connect(self.on_skin_changed)
         self.hud.avatar_image_changed.connect(self.on_avatar_image_changed)
         self.hud.hands_free_toggled.connect(self.on_hands_free_toggled)
+        self.hud.friend_mode_toggled.connect(self.on_friend_mode_toggled)
         self.hud.interrupt_requested.connect(self.interrupt_ai)
 
         # Conectar señales del Studio
@@ -313,6 +322,38 @@ class ThrusterApp:
         save_config(self.config)
         if hasattr(self, "studio") and self.studio:
             self.studio.log_activity("Sistema", "Modo Manos Libres", "Activado" if enabled else "Desactivado")
+
+    def on_friend_mode_toggled(self, enabled: bool):
+        """Activa o desactiva el Modo Charla con un Amigo y coordina el flujo manos libres."""
+        self.ai.set_friend_mode(enabled)
+        self.config["friend_mode"] = enabled
+        save_config(self.config)
+        if enabled:
+            # En Modo Amigo, habilitar automáticamente la escucha manos libres si estaba inactiva
+            if not getattr(self.listener, "hands_free", False):
+                self.hud.hands_free_active = True
+                self.listener.set_hands_free(True)
+            user_name = self._get_user_name()
+            saludos = [
+                f"¡Qué hacés, {user_name}! Acá estoy relajado. Tirame lo que tengas en mente o contame qué onda tu día.",
+                f"Buenas, {user_name}. Modo mate y charla activado. ¿Qué te anda pasando por la cabeza hoy?",
+                f"Hola {user_name}, ¡qué bueno charlar un rato! ¿En qué andamos hoy?"
+            ]
+            import random
+            greeting = random.choice(saludos)
+            self.hud.subtitle_received.emit("F3nix Amigo ☕", greeting)
+            self.studio.append_chat_message("F3nix Amigo ☕", greeting)
+            self.speaker.speak(
+                greeting,
+                on_start=lambda: self.hud.state_changed.emit("speaking"),
+                on_finish=lambda: self.hud.state_changed.emit("idle")
+            )
+            if hasattr(self, "studio") and self.studio:
+                self.studio.log_activity("Amigo", "Modo Charla Amigo Activado", "Conversación relajada, consejero y con humor")
+        else:
+            self.hud.subtitle_received.emit("Sistema", "Modo Amigo desactivado. Volviendo a asistente estándar.")
+            if hasattr(self, "studio") and self.studio:
+                self.studio.log_activity("Sistema", "Modo Amigo Desactivado", "Asistente estándar")
 
     def on_global_esc_pressed(self):
         """Atajo global Esc: interrumpe a F3NIX si está hablando o procesando."""
@@ -868,7 +909,8 @@ class ThrusterApp:
                     pass
                 elif c_type == "token":
                     full_reply = chunk.get("full_text", "")
-                    self.hud.subtitle_received.emit("F3nix", full_reply)
+                    sender_title = "F3nix Amigo ☕" if getattr(self.ai, "friend_mode", False) else "F3nix"
+                    self.hud.subtitle_received.emit(sender_title, full_reply)
                 elif c_type == "sentence":
                     sentence_text = chunk.get("content", "")
                     if sentence_text:
@@ -888,7 +930,8 @@ class ThrusterApp:
             sentence_queue.put(None)  # Notificar fin al reproductor
 
         if full_reply:
-            self.studio.append_chat_message("F3nix", full_reply)
+            sender_title = "F3nix Amigo ☕" if getattr(self.ai, "friend_mode", False) else "F3nix"
+            self.studio.append_chat_message(sender_title, full_reply)
 
     def start(self):
         """Arranca el HUD y el escuchador PTT con auto-arranque silencioso de Ollama y saludo de bienvenida."""

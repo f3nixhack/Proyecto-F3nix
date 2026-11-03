@@ -43,6 +43,7 @@ class AIEngine:
         self.on_timer_finished_callback: Optional[Callable[[str], None]] = None
         self.on_activity_callback: Optional[Callable[[str, str, str], None]] = None
         self.turbo_mode: bool = False
+        self.friend_mode: bool = False
         self._chat_lock = threading.Lock()
         self._ensure_valid_model()
         self.warmup_model()
@@ -89,6 +90,13 @@ class AIEngine:
         logger.info(f"AIEngine: Modo Turbo {'activado' if self.turbo_mode else 'desactivado'}")
         self._log_activity("Sistema", f"Modo Turbo {'Activado' if self.turbo_mode else 'Desactivado'}", "Respuestas ultra-rápidas")
         return self.turbo_mode
+
+    def set_friend_mode(self, enabled: bool) -> bool:
+        """Activa o desactiva el Modo Charla Amigo (voz relajada, consejero y con humor)."""
+        self.friend_mode = bool(enabled)
+        logger.info(f"AIEngine: Modo Amigo {'activado' if self.friend_mode else 'desactivado'}")
+        self._log_activity("Sistema", f"Modo Amigo {'Activado' if self.friend_mode else 'Desactivado'}", "Charla relajada, consejero y con humor")
+        return self.friend_mode
 
     def is_server_online(self) -> bool:
         """Verifica si el servidor de Ollama está en ejecución."""
@@ -156,6 +164,14 @@ class AIEngine:
                 for m in installed:
                     if tb in m.lower():
                         return (m, "Turbo ⚡")
+
+        # 2b. Modo Charla con un Amigo (Prioriza modelos rápidos y conversacionales en español)
+        if getattr(self, "friend_mode", False):
+            for fm in ["llama3.2:3b", "llama3.2", "llama3.1", "qwen2.5:7b", "hermes3"]:
+                for m in installed:
+                    if fm in m.lower():
+                        return (m, "Colega Amigo ☕")
+            return (self.current_model, "Colega Amigo ☕")
 
         p_lower = prompt.lower()
 
@@ -580,8 +596,8 @@ class AIEngine:
                 self._save_session()
                 return
 
-            # 1b. Caché Instantáneo (< 1ms) para saludos, cortesías o consultas repetidas
-            if not image_base64:
+            # 1b. Caché Instantáneo (< 1ms) para saludos, cortesías o consultas repetidas (omitido en Modo Amigo para espontaneidad)
+            if not image_base64 and not getattr(self, "friend_mode", False):
                 user_name = self.memory.get_user_name()
                 salutation = self.memory.get_salutation()
                 instant_reply = InstantCache.get_instant_reply(user_prompt, user_name, salutation)
@@ -803,7 +819,22 @@ class AIEngine:
 
             current_extras = f"{rag_context}{web_context}{doc_context}{clip_context}{desktop_context}"
 
-            if is_steelman:
+            if getattr(self, "friend_mode", False):
+                system_prompt = (
+                    f"Eres el mejor amigo y consejero cercano de {salutation}.\n"
+                    "PERSONALIDAD Y ROL:\n"
+                    "- Eres relajado, empático, con gran sentido del humor, chispa y calidez humana.\n"
+                    "- Eres un consejero leal y cercano: escuchas con atención sincera, entiendes lo que le pasa a tu amigo, das buenos consejos sabios y prácticos cuando los necesita, pero siempre descontracturado y con humor inteligente para descomprimir y levantar el ánimo.\n"
+                    "- Hablas como dos amigos tomándose un café o charlando en una llamada relajada, NUNCA como una IA corporativa, ni un asistente servil, ni un robot.\n\n"
+                    "REGLAS ESTRICTAS DE CONVERSACIÓN DE VOZ:\n"
+                    "1. CONCISIÓN DE PING-PONG: Responde en 1 a 3 oraciones breves y habladas. NUNCA hagas monólogos ni párrafos eternos.\n"
+                    "2. FLUIDEZ COLOQUIAL: Usa modismos naturales, muletillas y calidez ('Mirá...', 'Che...', 'Uf, total', 'Tranqui', '¿En serio?', 'Qué hacés amigo', 'Te banco').\n"
+                    "3. REPREGUNTA ESPONTÁNEA: Hazle de vez en cuando una pregunta corta al final para que la charla fluya naturalmente ('¿Y qué pensás hacer?', '¿Te sirvió eso o fue un lío?').\n"
+                    "4. CERO FORMATO: Prohibido usar markdown, asteriscos, viñetas, títulos o bloques de código. Todo lo que generes será leído en voz alta directamente.\n"
+                    f"{memory_block}"
+                )
+                user_turn_content = f"{current_extras}[CHARLA CON TU AMIGO]:\n{user_prompt}" if current_extras.strip() else user_prompt
+            elif is_steelman:
                 system_prompt = self.reasoning.build_director_system_prompt(salutation)
                 user_turn_content = self.reasoning.build_deliberation_prompt(user_prompt, salutation, context=current_extras)
             elif is_plan:
@@ -840,7 +871,10 @@ class AIEngine:
             has_external_context = bool(web_context.strip() or doc_context.strip() or rag_context.strip())
             is_deep_request = "Razonamiento" in brain_badge or "Código" in brain_badge or is_steelman
 
-            if is_turbo:
+            if getattr(self, "friend_mode", False):
+                num_tokens = 110
+                ctx_size = 1024
+            elif is_turbo:
                 num_tokens = 90
                 ctx_size = 1024
             elif is_steelman:
@@ -861,9 +895,9 @@ class AIEngine:
 
             # Optimización de CPU para Intel Core i5 (4 núcleos físicos, num_ctx acotado y keep_alive 60m)
             options = {
-                "temperature": 0.4 if is_turbo else 0.7,
+                "temperature": 0.8 if getattr(self, "friend_mode", False) else (0.4 if is_turbo else 0.7),
                 "num_predict": num_tokens,
-                "repeat_penalty": 1.1,
+                "repeat_penalty": 1.15 if getattr(self, "friend_mode", False) else 1.1,
                 "num_thread": 4,
                 "num_ctx": ctx_size,
                 "top_k": 30
@@ -1179,7 +1213,22 @@ class AIEngine:
 
         current_extras = f"{rag_context}{web_context}{doc_context}{clip_context}{desktop_context}"
 
-        if is_steelman:
+        if getattr(self, "friend_mode", False):
+            system_prompt = (
+                f"Eres el mejor amigo y consejero cercano de {salutation}.\n"
+                "PERSONALIDAD Y ROL:\n"
+                "- Eres relajado, empático, con gran sentido del humor, chispa y calidez humana.\n"
+                "- Eres un consejero leal y cercano: escuchas con atención sincera, entiendes lo que le pasa a tu amigo, das buenos consejos sabios y prácticos cuando los necesita, pero siempre descontracturado y con humor inteligente para descomprimir y levantar el ánimo.\n"
+                "- Hablas como dos amigos tomándose un café o charlando en una llamada relajada, NUNCA como una IA corporativa, ni un asistente servil, ni un robot.\n\n"
+                "REGLAS ESTRICTAS DE CONVERSACIÓN DE VOZ:\n"
+                "1. CONCISIÓN DE PING-PONG: Responde en 1 a 3 oraciones breves y habladas. NUNCA hagas monólogos ni párrafos eternos.\n"
+                "2. FLUIDEZ COLOQUIAL: Usa modismos naturales, muletillas y calidez ('Mirá...', 'Che...', 'Uf, total', 'Tranqui', '¿En serio?', 'Qué hacés amigo', 'Te banco').\n"
+                "3. REPREGUNTA ESPONTÁNEA: Hazle de vez en cuando una pregunta corta al final para que la charla fluya naturalmente ('¿Y qué pensás hacer?', '¿Te sirvió eso o fue un lío?').\n"
+                "4. CERO FORMATO: Prohibido usar markdown, asteriscos, viñetas, títulos o bloques de código. Todo lo que generes será leído en voz alta directamente.\n"
+                f"{memory_block}"
+            )
+            user_turn_content = f"{current_extras}[CHARLA CON TU AMIGO]:\n{user_prompt}" if current_extras.strip() else user_prompt
+        elif is_steelman:
             system_prompt = self.reasoning.build_director_system_prompt(salutation)
             user_turn_content = self.reasoning.build_deliberation_prompt(user_prompt, salutation, context=current_extras)
         elif is_plan:
@@ -1221,7 +1270,10 @@ class AIEngine:
         )
 
         # num_predict: más tokens cuando hay contexto externo para no cortar la respuesta a mitad
-        if is_turbo:
+        if getattr(self, "friend_mode", False):
+            num_tokens = 110
+            ctx_size = 1024
+        elif is_turbo:
             num_tokens = 90
             ctx_size = 1024
         elif is_steelman:
@@ -1246,9 +1298,9 @@ class AIEngine:
 
         # Optimización de CPU para Intel Core i5
         options = {
-            "temperature": 0.4 if is_turbo else 0.7,
+            "temperature": 0.8 if getattr(self, "friend_mode", False) else (0.4 if is_turbo else 0.7),
             "num_predict": num_tokens,
-            "repeat_penalty": 1.1,
+            "repeat_penalty": 1.15 if getattr(self, "friend_mode", False) else 1.1,
             "num_thread": 4,
             "num_ctx": ctx_size,
             "top_k": 30

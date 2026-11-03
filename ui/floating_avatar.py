@@ -112,6 +112,7 @@ class FloatingAvatar(QWidget):
     skin_changed = pyqtSignal(str)
     avatar_image_changed = pyqtSignal(str)
     hands_free_toggled = pyqtSignal(bool)
+    friend_mode_toggled = pyqtSignal(bool)
 
     def __init__(self, avatar_path: str = "thruster_avatar.jpg"):
         super().__init__()
@@ -128,6 +129,7 @@ class FloatingAvatar(QWidget):
         self.current_skin = "cyberpunk"
         self.state_colors = dict(AVATAR_THEMES["cyberpunk"]["colors"])
         self.hands_free_active = False
+        self.is_friend_mode = False
 
         # Habilitar arrastrar y soltar archivos directamente sobre el avatar
         self.setAcceptDrops(True)
@@ -181,9 +183,9 @@ class FloatingAvatar(QWidget):
         info_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         info_layout.setSpacing(4)
 
-        # Fila de Título con botón de ayuda [?]
+        # Fila de Título con botones de herramientas
         title_row = QHBoxLayout()
-        title_row.setSpacing(6)
+        title_row.setSpacing(4)
         self.title_label = QLabel("PROYECTO F3NIX")
         self.title_label.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 13px; letter-spacing: 1px;")
 
@@ -195,6 +197,17 @@ class FloatingAvatar(QWidget):
             "QPushButton:hover { background: #00E5FF; color: #000000; }"
         )
         self.help_btn.clicked.connect(self.open_quick_guide_requested.emit)
+
+        # Botón Modo Charla con un Amigo (☕)
+        self.friend_chat_btn = QPushButton("☕")
+        self.friend_chat_btn.setFixedSize(18, 18)
+        self.friend_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.friend_chat_btn.setToolTip("Modo Charla con un Amigo (Voz relajada, consejero cercano y con humor)")
+        self.friend_chat_btn.setStyleSheet(
+            "QPushButton { background: rgba(255, 183, 3, 0.15); color: #FFB703; border: 1px solid rgba(255, 183, 3, 0.4); border-radius: 9px; font-size: 10px; padding: 0; }"
+            "QPushButton:hover { background: #FFB703; color: #000000; font-weight: bold; }"
+        )
+        self.friend_chat_btn.clicked.connect(self.toggle_friend_mode)
 
         # Botón 'Mira esto' (Visión de Pantalla en tiempo real con Moondream)
         self.vision_btn = QPushButton("👁️")
@@ -264,6 +277,7 @@ class FloatingAvatar(QWidget):
 
         title_row.addWidget(self.title_label)
         title_row.addWidget(self.help_btn)
+        title_row.addWidget(self.friend_chat_btn)
         title_row.addWidget(self.vision_btn)
         title_row.addWidget(self.audio_summary_btn)
         title_row.addWidget(self.tasks_btn)
@@ -279,6 +293,7 @@ class FloatingAvatar(QWidget):
 
         self.hints_list = [
             "Mantén F12 para hablar",
+            "💡 Clic en [☕] para activar Modo Charla Amigo (con humor y relax)",
             "💡 Doble clic en el avatar para abrir F3NIX Studio",
             "💡 Clic en [🏛️] para abrir Mesa Redonda y Studio",
             "💡 Clic en [✕] para cerrar el programa por completo",
@@ -648,6 +663,30 @@ class FloatingAvatar(QWidget):
                 event.acceptProposedAction()
                 break
 
+    def toggle_friend_mode(self, enabled=None):
+        """Alterna el Modo Charla Amigo (voz relajada, consejero cercano y con humor)."""
+        if enabled is None:
+            self.is_friend_mode = not getattr(self, "is_friend_mode", False)
+        else:
+            self.is_friend_mode = bool(enabled)
+
+        if hasattr(self, "friend_chat_btn"):
+            if self.is_friend_mode:
+                self.friend_chat_btn.setStyleSheet(
+                    "QPushButton { background: #FFB703; color: #000000; border: 1px solid #FFA000; border-radius: 9px; font-size: 10px; font-weight: bold; padding: 0; }"
+                    "QPushButton:hover { background: #FFC107; color: #000000; }"
+                )
+                self.status_label.setText("☕ Charla Amigo Activa")
+                self.status_label.setStyleSheet("color: #FFB703; font-size: 12px; font-weight: 600;")
+            else:
+                self.friend_chat_btn.setStyleSheet(
+                    "QPushButton { background: rgba(255, 183, 3, 0.15); color: #FFB703; border: 1px solid rgba(255, 183, 3, 0.4); border-radius: 9px; font-size: 10px; padding: 0; }"
+                    "QPushButton:hover { background: #FFB703; color: #000000; font-weight: bold; }"
+                )
+                self.set_state(self.current_state)
+
+        self.friend_mode_toggled.emit(self.is_friend_mode)
+
     def toggle_mini_mode(self):
         """Alterna entre el modo HUD extendido y el modo Mini-Orbe Zen preservando la posición en pantalla."""
         self.is_mini_mode = not getattr(self, "is_mini_mode", False)
@@ -698,6 +737,7 @@ class FloatingAvatar(QWidget):
 
         # F3NIX Studio (Hermes Desktop Workspace)
         studio_act = menu.addAction("🏛️ Abrir F3NIX Studio / Mesa Redonda")
+        friend_act = menu.addAction("☕ Modo Charla Amigo: ACTIVO (Relajado & Humor)" if getattr(self, "is_friend_mode", False) else "☕ Activar Modo Charla Amigo (Relajado & Humor)")
         launcher_act = menu.addAction("🔍 Barra Rápida Global (Alt + F)")
         mini_act = menu.addAction("🔮 Modo Mini-Orbe Zen" if not getattr(self, "is_mini_mode", False) else "🔮 Expandir HUD Completo")
         is_turbo = getattr(self, "turbo_mode", True)
@@ -808,6 +848,8 @@ class FloatingAvatar(QWidget):
             self.show_subtitle_message("Sistema", msg)
         elif action == studio_act:
             self.toggle_studio_requested.emit()
+        elif action == friend_act:
+            self.toggle_friend_mode()
         elif action == mini_act:
             self.toggle_mini_mode()
         elif action == launcher_act:
