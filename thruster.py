@@ -67,10 +67,24 @@ class ThrusterApp:
         # 0. Diagnóstico y Auto-Reparación de Entorno (Doctor F3NIX)
         self._ensure_environment_health()
 
-        # 1. Inicializar Motores de IA y Memoria
+        # Cargar clave de Groq desde f3nix_secrets.json, entorno o config.json
+        groq_api_key = config.get("groq_api_key") or os.environ.get("GROQ_API_KEY")
+        if not groq_api_key and os.path.exists("f3nix_secrets.json"):
+            try:
+                with open("f3nix_secrets.json", "r", encoding="utf-8") as sf:
+                    secrets_data = json.load(sf)
+                    groq_api_key = secrets_data.get("groq_api_key")
+            except Exception:
+                pass
+
+        groq_model = config.get("groq_model", "qwen/qwen3.8-27b")
+
+        # 1. Inicializar Motores de IA y Memoria (con Groq Cloud ultra-rápido y fallback Ollama)
         self.ai = AIEngine(
             base_url=config.get("ollama_url", "http://localhost:11434"),
-            default_model=config.get("model", "thruster_ai")
+            default_model=config.get("model", "thruster_ai"),
+            groq_api_key=groq_api_key if config.get("groq_enabled", True) else None,
+            groq_model=groq_model
         )
         self.memory = self.ai.memory
 
@@ -111,10 +125,11 @@ class ThrusterApp:
             self.speaker.current_voice
         )
 
-        # 4. Inicializar Escuchador de Teclado Push-to-Talk (F12) con señales Qt
+        # 4. Inicializar Escuchador de Teclado Push-to-Talk (F12) con señales Qt y Groq Whisper
         self.listener = VoiceListener(
             ptt_key=config.get("ptt_key", "f12"),
             language=config.get("stt_language", "es-ES"),
+            groq_api_key=groq_api_key if config.get("groq_whisper", True) else None,
             parent=self.hud
         )
         self.listener.start_listening_signal.connect(self.on_start_listening)

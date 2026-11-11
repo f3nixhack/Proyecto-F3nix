@@ -37,6 +37,7 @@ venv.bak/
 screen_capture.jpg
 f3nix_rag_cache.json
 f3nix_session.json
+f3nix_secrets.json
 scratch/*.png
 scratch/*.pdf
 *.tmp

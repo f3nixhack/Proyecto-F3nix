@@ -10,5 +10,9 @@
   "volume": 1.0,
   "voice_rate": "+18%",
   "avatar_x": 1131,
-  "avatar_y": 555
+  "avatar_y": 555,
+  "groq_api_key": "",
+  "groq_enabled": true,
+  "groq_model": "qwen/qwen3.8-27b",
+  "groq_whisper": true
 }

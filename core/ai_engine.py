@@ -27,7 +27,9 @@ class AIEngine:
         default_model: str = "llama3.2:3b",
         memory: Optional[MemoryVault] = None,
         rag: Optional[LocalRAG] = None,
-        task_manager: Optional[TaskManager] = None
+        task_manager: Optional[TaskManager] = None,
+        groq_api_key: Optional[str] = None,
+        groq_model: str = "qwen/qwen3.8-27b"
     ):
         self.base_url = base_url.rstrip("/")
         self.current_model = default_model
@@ -45,6 +47,9 @@ class AIEngine:
         self.turbo_mode: bool = False
         self.friend_mode: bool = False
         self.call_tone: str = "amigo"  # "amigo", "sin_filtro", "director"
+        self.groq_api_key = groq_api_key
+        self.groq_model = groq_model
+        self.groq_enabled = bool(groq_api_key)
         self._chat_lock = threading.Lock()
         self._ensure_valid_model()
         self.warmup_model()
@@ -156,6 +161,65 @@ class AIEngine:
                 "4. CERO FORMATO: Prohibido usar markdown, asteriscos, viñetas, títulos o bloques de código. Todo lo que generes será leído en voz alta directamente.\n"
                 f"{memory_block}"
             )
+
+    def _stream_groq_friend(self, user_prompt: str, system_prompt: str):
+        """Genera respuesta en ultra-alta velocidad (sub-segundo ~300ms) usando Groq Cloud API."""
+        if not self.groq_api_key or not getattr(self, "groq_enabled", False):
+            return
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.groq_api_key}",
+            "Content-Type": "application/json"
+        }
+        recent_history = self.history[-4:] if len(self.history) > 4 else self.history
+        messages = [{"role": "system", "content": system_prompt}]
+        for turn in recent_history:
+            messages.append(turn)
+        messages.append({"role": "user", "content": user_prompt})
+
+        payload = {
+            "model": self.groq_model,
+            "messages": messages,
+            "max_tokens": 70,
+            "temperature": 0.7,
+            "stream": True
+        }
+
+        try:
+            r = requests.post(url, headers=headers, json=payload, stream=True, timeout=4.5)
+            if r.status_code == 200:
+                accumulated_text = ""
+                sentence_buffer = ""
+                yield {"type": "meta", "brain": "Groq Ultra-Fast ⚡", "model": self.groq_model}
+                for line in r.iter_lines():
+                    if line:
+                        line_str = line.decode("utf-8")
+                        if line_str.startswith("data: ") and line_str != "data: [DONE]":
+                            data = json.loads(line_str[6:])
+                            delta = data["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                accumulated_text += delta
+                                sentence_buffer += delta
+                                yield {"type": "token", "content": delta, "full_text": accumulated_text}
+                                m = re.search(r'([.!?\n])(\s+|$)', sentence_buffer)
+                                if m and len(sentence_buffer.strip()) >= 15:
+                                    idx = m.end()
+                                    candidate = sentence_buffer[:idx].strip()
+                                    if candidate:
+                                        yield {"type": "sentence", "content": candidate}
+                                    sentence_buffer = sentence_buffer[idx:]
+
+                if sentence_buffer.strip():
+                    yield {"type": "sentence", "content": sentence_buffer.strip()}
+
+                clean_text = accumulated_text.strip()
+                if clean_text:
+                    self.history.append({"role": "user", "content": user_prompt})
+                    self.history.append({"role": "assistant", "content": clean_text})
+                    self._save_session()
+                    self._log_activity("Llamada", f"Groq ({self.groq_model})", f"Respuesta en sub-segundo ({len(clean_text)} chars)")
+        except Exception as e:
+            logger.warning(f"Groq API falló o timeout, pasando a Ollama local: {e}")
 
     def is_server_online(self) -> bool:
         """Verifica si el servidor de Ollama está en ejecución."""
@@ -894,6 +958,15 @@ class AIEngine:
                 system_prompt = self._build_call_personality_prompt(salutation, memory_block)
                 tone_label = getattr(self, "call_tone", "amigo").upper()
                 user_turn_content = f"{current_extras}[LLAMADA VOZ A VOZ ({tone_label})]:\n{user_prompt}" if current_extras.strip() else user_prompt
+
+                # Inferencia ultra-rápida de llamada con Groq (< 400ms) con fallback a Ollama
+                if getattr(self, "groq_enabled", False) and getattr(self, "groq_api_key", None):
+                    groq_worked = False
+                    for chunk in self._stream_groq_friend(user_prompt, system_prompt):
+                        groq_worked = True
+                        yield chunk
+                    if groq_worked:
+                        return
             elif is_steelman:
                 system_prompt = self.reasoning.build_director_system_prompt(salutation)
                 user_turn_content = self.reasoning.build_deliberation_prompt(user_prompt, salutation, context=current_extras)
@@ -1282,6 +1355,10 @@ class AIEngine:
             system_prompt = self._build_call_personality_prompt(salutation, memory_block)
             tone_label = getattr(self, "call_tone", "amigo").upper()
             user_turn_content = f"{current_extras}[LLAMADA VOZ A VOZ ({tone_label})]:\n{user_prompt}" if current_extras.strip() else user_prompt
+            if getattr(self, "groq_enabled", False) and getattr(self, "groq_api_key", None):
+                groq_tokens = [c.get("content", "") for c in self._stream_groq_friend(user_prompt, system_prompt) if c.get("type") == "token"]
+                if groq_tokens:
+                    return "".join(groq_tokens)
         elif is_steelman:
             system_prompt = self.reasoning.build_director_system_prompt(salutation)
             user_turn_content = self.reasoning.build_deliberation_prompt(user_prompt, salutation, context=current_extras)

@@ -33,6 +33,7 @@ class VoiceListener(QObject):
         on_stop_listening: Optional[Callable[[], None]] = None,
         on_transcription: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
+        groq_api_key: Optional[str] = None,
         parent: Optional[QObject] = None
     ):
         super().__init__(parent)
@@ -42,6 +43,8 @@ class VoiceListener(QObject):
         self.on_stop_listening = on_stop_listening
         self.on_transcription = on_transcription
         self.on_error = on_error
+        self.groq_api_key = groq_api_key
+        self.groq_whisper_enabled = bool(groq_api_key)
 
         self.recognizer = sr.Recognizer()
         self.is_recording = False
@@ -55,7 +58,7 @@ class VoiceListener(QObject):
         self.barge_in_callback: Optional[Callable[[], None]] = None
         self.is_speaking_checker: Optional[Callable[[], bool]] = None
         self.rms_threshold: int = 750
-        self.silence_limit_seconds: float = 0.65  # Agilidad de respuesta conversacional (reducido de 1.2s)
+        self.silence_limit_seconds: float = 0.38  # Ultra-rápido: 380ms para respuesta inmediata estilo llamada
 
         # Filtro Anti-Eco Acústico de ChoferPro (evita que los parlantes activen el mic)
         self.last_assistant_speech: str = ""
@@ -377,8 +380,40 @@ class VoiceListener(QObject):
         # Transcribir en un hilo para no bloquear la UI
         threading.Thread(target=self._transcribe_worker, args=(list(self._audio_frames),), daemon=True).start()
 
+    def _transcribe_groq_whisper(self, raw_audio_bytes: bytes) -> Optional[str]:
+        """Transcribe audio en ultra-alta velocidad (< 400ms) usando Groq Whisper-Large-v3-Turbo."""
+        if not self.groq_api_key or not self.groq_whisper_enabled:
+            return None
+        try:
+            import requests
+            wav_io = io.BytesIO()
+            with wave.open(wav_io, "wb") as wf:
+                wf.setnchannels(self.channels)
+                wf.setsampwidth(2)
+                wf.setframerate(self.sample_rate)
+                wf.writeframes(raw_audio_bytes)
+            wav_io.seek(0)
+
+            files = {"file": ("audio.wav", wav_io, "audio/wav")}
+            data = {"model": "whisper-large-v3-turbo", "language": "es"}
+            r = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {self.groq_api_key}"},
+                files=files,
+                data=data,
+                timeout=3.5
+            )
+            if r.status_code == 200:
+                result = r.json().get("text", "").strip()
+                if result:
+                    logger.info(f"Groq Whisper reconocido en alta velocidad: '{result}'")
+                    return result
+        except Exception as e:
+            logger.warning(f"Groq Whisper falló o agotó tiempo, pasando a Google STT fallback: {e}")
+        return None
+
     def _transcribe_worker(self, frames):
-        """Convierte los frames de audio grabados a texto."""
+        """Convierte los frames de audio grabados a texto (Groq Whisper con fallback Google)."""
         if not frames or len(frames) < 8:  # Menos de ~0.4 seg
             # Notificar para que el HUD regrese a 'idle' sin quedarse congelado en 'thinking'
             self.error_occurred.emit("")
@@ -387,31 +422,40 @@ class VoiceListener(QObject):
             return
 
         raw_audio_bytes = b"".join(frames)
-        audio_data = sr.AudioData(raw_audio_bytes, self.sample_rate, 2)
 
-        try:
-            text = self.recognizer.recognize_google(audio_data, language=self.language)
-            logger.info(f"Texto reconocido: {text}")
-            stripped = text.strip()
-            if stripped:
-                if self.is_echo(stripped):
-                    logger.info(f"[Anti-Echo] Descartada transcripción por eco acústico del parlante: '{stripped}'")
-                    self.error_occurred.emit("")
-                    if self.on_error:
-                        self.on_error("")
-                    return
-                self.transcription_ready.emit(stripped)
-                if self.on_transcription:
-                    self.on_transcription(stripped)
-        except sr.UnknownValueError:
-            logger.warning("No se detectó voz comprensible.")
-            self.error_occurred.emit("No logré entender lo que dijiste.")
-            if self.on_error:
-                self.on_error("No logré entender lo que dijiste.")
-        except sr.RequestError as e:
-            logger.error(f"Error del servicio de reconocimiento: {e}")
-            self.error_occurred.emit("Error de conexión con el servicio de voz.")
-            if self.on_error:
-                self.on_error("Error de conexión con el servicio de voz.")
-        except Exception as e:
-            logger.error(f"Error procesando transcripción: {e}")
+        # 1. Intentar reconocimiento de voz ultra-rápido por Groq Whisper (< 400ms)
+        text = self._transcribe_groq_whisper(raw_audio_bytes)
+
+        # 2. Si no hay Groq o falló conexión, usar fallback estándar de Google
+        if not text:
+            audio_data = sr.AudioData(raw_audio_bytes, self.sample_rate, 2)
+            try:
+                text = self.recognizer.recognize_google(audio_data, language=self.language)
+            except sr.UnknownValueError:
+                logger.warning("No se detectó voz comprensible.")
+                self.error_occurred.emit("No logré entender lo que dijiste.")
+                if self.on_error:
+                    self.on_error("No logré entender lo que dijiste.")
+                return
+            except sr.RequestError as e:
+                logger.error(f"Error del servicio de reconocimiento: {e}")
+                self.error_occurred.emit("Error de conexión con el servicio de voz.")
+                if self.on_error:
+                    self.on_error("Error de conexión con el servicio de voz.")
+                return
+            except Exception as e:
+                logger.error(f"Error procesando transcripción: {e}")
+                return
+
+        logger.info(f"Texto reconocido final: {text}")
+        stripped = (text or "").strip()
+        if stripped:
+            if self.is_echo(stripped):
+                logger.info(f"[Anti-Echo] Descartada transcripción por eco acústico del parlante: '{stripped}'")
+                self.error_occurred.emit("")
+                if self.on_error:
+                    self.on_error("")
+                return
+            self.transcription_ready.emit(stripped)
+            if self.on_transcription:
+                self.on_transcription(stripped)
