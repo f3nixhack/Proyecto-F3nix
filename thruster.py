@@ -959,8 +959,9 @@ class ThrusterApp:
             self._is_ai_busy = False
 
     def _process_streaming_turn(self, user_text: str, clip_content: str = "", image_base64: Optional[str] = None):
-        """Procesa una consulta en streaming: tokens en vivo en UI y audio frase a frase."""
+        """Procesa una consulta en streaming: tokens en vivo en UI y audio fluido sin cortes."""
         import queue
+        is_friend = getattr(self.ai, "friend_mode", False)
         sentence_queue = queue.Queue()
 
         def sentence_generator():
@@ -970,12 +971,14 @@ class ThrusterApp:
                     break
                 yield item
 
-        # Iniciar reproductor de audio frase a frase en streaming
-        self.speaker.speak_stream(
-            sentence_generator(),
-            on_start=lambda: self.hud.state_changed.emit("speaking"),
-            on_finish=lambda: self.hud.state_changed.emit("idle")
-        )
+        # En modo estándar de escritorio usamos speak_stream; en modo llamada/amigo sintetizamos
+        # la respuesta concisa como una sola pista continua para evitar pausas y cortes entre frases.
+        if not is_friend:
+            self.speaker.speak_stream(
+                sentence_generator(),
+                on_start=lambda: self.hud.state_changed.emit("speaking"),
+                on_finish=lambda: self.hud.state_changed.emit("idle")
+            )
 
         full_reply = ""
         self._cancel_requested = False
@@ -1002,13 +1005,13 @@ class ThrusterApp:
                     pass
                 elif c_type == "token":
                     full_reply = chunk.get("full_text", "")
-                    sender_title = "F3nix Amigo ☕" if getattr(self.ai, "friend_mode", False) else "F3nix"
+                    sender_title = "F3nix Amigo ☕" if is_friend else "F3nix"
                     self.hud.subtitle_received.emit(sender_title, full_reply)
                     if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
                         self.call_dialog.update_assistant_speech(full_reply, is_final=False)
                 elif c_type == "sentence":
                     sentence_text = chunk.get("content", "")
-                    if sentence_text:
+                    if sentence_text and not is_friend:
                         sentence_queue.put(sentence_text)
                 elif c_type == "plan_steps":
                     steps = chunk.get("steps", [])
@@ -1020,15 +1023,26 @@ class ThrusterApp:
                 elif c_type == "error":
                     err_msg = chunk.get("content", "")
                     self.hud.subtitle_received.emit("F3nix", err_msg)
-                    sentence_queue.put(err_msg)
+                    if not is_friend:
+                        sentence_queue.put(err_msg)
         finally:
             sentence_queue.put(None)  # Notificar fin al reproductor
 
         if full_reply:
-            sender_title = "F3nix Amigo ☕" if getattr(self.ai, "friend_mode", False) else "F3nix"
+            sender_title = "F3nix Amigo ☕" if is_friend else "F3nix"
             self.studio.append_chat_message(sender_title, full_reply)
             if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
                 self.call_dialog.update_assistant_speech(full_reply, is_final=True)
+
+            if is_friend and not getattr(self, "_cancel_requested", False):
+                # En modo llamada: sintetizar y reproducir toda la respuesta continua sin cortes ni pausas
+                is_muted = getattr(self.call_dialog, "is_muted", False) if (hasattr(self, "call_dialog") and self.call_dialog) else False
+                if not is_muted:
+                    self.speaker.speak(
+                        full_reply,
+                        on_start=lambda: self.hud.state_changed.emit("speaking"),
+                        on_finish=lambda: self.hud.state_changed.emit("idle")
+                    )
 
     def start(self):
         """Arranca el HUD y el escuchador PTT con auto-arranque silencioso de Ollama y saludo de bienvenida."""

@@ -55,7 +55,7 @@ class VoiceListener(QObject):
         self.barge_in_callback: Optional[Callable[[], None]] = None
         self.is_speaking_checker: Optional[Callable[[], bool]] = None
         self.rms_threshold: int = 750
-        self.silence_limit_seconds: float = 1.2
+        self.silence_limit_seconds: float = 0.65  # Agilidad de respuesta conversacional (reducido de 1.2s)
 
         # Filtro Anti-Eco Acústico de ChoferPro (evita que los parlantes activen el mic)
         self.last_assistant_speech: str = ""
@@ -221,11 +221,18 @@ class VoiceListener(QObject):
                     data = stream.read(self.chunk_size, exception_on_overflow=False)
                     rms = self._calc_rms(data)
 
-                    # Interrupción al hablar (Barge-In) si el asistente está respondiendo
+                    # Si el asistente está hablando por los altavoces de la PC:
+                    # Ignorar entrada de micrófono para evitar que el sonido de los altavoces corte la reproducción
                     if self.is_speaking_checker and self.is_speaking_checker():
-                        if rms > 1600:
-                            if self.barge_in_callback:
-                                self.barge_in_callback()
+                        is_speaking_now = False
+                        speaking_frames = []
+                        time.sleep(0.04)
+                        continue
+
+                    # Período de gracia post-habla: drenar el eco y reverberación residual del ambiente (0.65s)
+                    if time.time() - self.last_speech_end_time < 0.65:
+                        is_speaking_now = False
+                        speaking_frames = []
                         continue
 
                     # Detección de voz activa

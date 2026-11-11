@@ -655,19 +655,31 @@ class AIEngine:
                 self._save_session()
                 return
 
-            # 1b. Caché Instantáneo (< 1ms) para saludos, cortesías o consultas repetidas (omitido en Modo Amigo para espontaneidad)
-            if not image_base64 and not getattr(self, "friend_mode", False):
+            # 1b. Caché Instantáneo (< 1ms) para saludos, cortesías o consultas repetidas
+            if not image_base64:
                 user_name = self.memory.get_user_name()
                 salutation = self.memory.get_salutation()
-                instant_reply = InstantCache.get_instant_reply(user_prompt, user_name, salutation)
-                if instant_reply:
-                    yield {"type": "meta", "brain": "Instantáneo ⚡", "model": "Caché <1ms"}
-                    yield {"type": "token", "content": instant_reply, "full_text": instant_reply}
-                    yield {"type": "sentence", "content": instant_reply}
-                    self.history.append({"role": "user", "content": user_prompt})
-                    self.history.append({"role": "assistant", "content": instant_reply})
-                    self._save_session()
-                    return
+                if getattr(self, "friend_mode", False):
+                    tone = getattr(self, "call_tone", "amigo")
+                    instant_reply = InstantCache.get_instant_friend_reply(user_prompt, user_name, salutation, tone=tone)
+                    if instant_reply:
+                        yield {"type": "meta", "brain": "Colega Amigo ☕", "model": "Caché Inmediato <1ms"}
+                        yield {"type": "token", "content": instant_reply, "full_text": instant_reply}
+                        yield {"type": "sentence", "content": instant_reply}
+                        self.history.append({"role": "user", "content": user_prompt})
+                        self.history.append({"role": "assistant", "content": instant_reply})
+                        self._save_session()
+                        return
+                else:
+                    instant_reply = InstantCache.get_instant_reply(user_prompt, user_name, salutation)
+                    if instant_reply:
+                        yield {"type": "meta", "brain": "Instantáneo ⚡", "model": "Caché <1ms"}
+                        yield {"type": "token", "content": instant_reply, "full_text": instant_reply}
+                        yield {"type": "sentence", "content": instant_reply}
+                        self.history.append({"role": "user", "content": user_prompt})
+                        self.history.append({"role": "assistant", "content": instant_reply})
+                        self._save_session()
+                        return
 
             # 2. Visión Multimodal ("mira mi pantalla", etc.)
             vision_triggers = [
@@ -920,8 +932,8 @@ class AIEngine:
             is_deep_request = "Razonamiento" in brain_badge or "Código" in brain_badge or is_steelman
 
             if getattr(self, "friend_mode", False):
-                num_tokens = 110
-                ctx_size = 1024
+                num_tokens = 60
+                ctx_size = 512
             elif is_turbo:
                 num_tokens = 90
                 ctx_size = 1024
@@ -1084,7 +1096,12 @@ class AIEngine:
         # 1b. Caché Instantáneo (< 1ms) para saludos, cortesías o consultas repetidas
         user_name = self.memory.get_user_name()
         salutation = self.memory.get_salutation()
-        instant_reply = InstantCache.get_instant_reply(user_prompt, user_name, salutation)
+        if getattr(self, "friend_mode", False):
+            tone = getattr(self, "call_tone", "amigo")
+            instant_reply = InstantCache.get_instant_friend_reply(user_prompt, user_name, salutation, tone=tone)
+        else:
+            instant_reply = InstantCache.get_instant_reply(user_prompt, user_name, salutation)
+
         if instant_reply:
             self.history.append({"role": "user", "content": user_prompt})
             self.history.append({"role": "assistant", "content": instant_reply})
@@ -1308,8 +1325,8 @@ class AIEngine:
 
         # num_predict: más tokens cuando hay contexto externo para no cortar la respuesta a mitad
         if getattr(self, "friend_mode", False):
-            num_tokens = 110
-            ctx_size = 1024
+            num_tokens = 60
+            ctx_size = 512
         elif is_turbo:
             num_tokens = 90
             ctx_size = 1024
