@@ -1,4 +1,5 @@
 import io
+import re
 import time
 import wave
 import threading
@@ -56,6 +57,11 @@ class VoiceListener(QObject):
         self.rms_threshold: int = 750
         self.silence_limit_seconds: float = 1.2
 
+        # Filtro Anti-Eco Acústico de ChoferPro (evita que los parlantes activen el mic)
+        self.last_assistant_speech: str = ""
+        self.last_speech_end_time: float = 0.0
+        self.echo_cancellation_enabled: bool = True
+
         # Parámetros de audio
         self.chunk_size = 1024
         self.audio_format = pyaudio.paInt16
@@ -77,6 +83,61 @@ class VoiceListener(QObject):
         self.hands_free = enabled
         logger.info(f"Modo Manos Libres {'ACTIVADO' if enabled else 'DESACTIVADO'}")
         self.hands_free_changed.emit(enabled)
+
+    def set_last_assistant_speech(self, text: str):
+        """Registra el último texto sintetizado por el asistente para filtrado de eco acústico."""
+        self.last_assistant_speech = text or ""
+
+    def mark_speech_ended(self):
+        """Marca el timestamp de fin de reproducción para el período de gracia anti-eco."""
+        self.last_speech_end_time = time.time()
+
+    @staticmethod
+    def _normalize_for_echo(s: str) -> str:
+        """Normaliza texto para comparación acústica idéntica al algoritmo de ChoferPro."""
+        text = (s or "").lower()
+        replacements = [
+            ('á', 'a'), ('é', 'e'), ('í', 'i'), ('ó', 'o'), ('ú', 'u'),
+            ('ü', 'u'), ('ñ', 'n')
+        ]
+        for orig, rep in replacements:
+            text = text.replace(orig, rep)
+        text = re.sub(r'[^a-z0-9\s]', ' ', text)
+        return re.sub(r'\s+', ' ', text).strip()
+
+    def is_echo(self, text: str) -> bool:
+        """
+        Determina si el texto capturado proviene del eco de los altavoces de la PC.
+        Utiliza solapamiento de palabras (overlap ratio >= 35%) y subcadenas normalizadas.
+        """
+        if not self.echo_cancellation_enabled or not text or not self.last_assistant_speech:
+            return False
+
+        norm_input = self._normalize_for_echo(text)
+        norm_last = self._normalize_for_echo(self.last_assistant_speech)
+
+        if not norm_input or not norm_last:
+            return False
+
+        # Si el input completo está contenido en la última frase del asistente (longitud mínima 7 chars)
+        if len(norm_input) >= 7 and norm_input in norm_last:
+            return True
+
+        # Comparación por conjunto de palabras con umbral de 35% de solapamiento
+        input_words = set(norm_input.split())
+        last_words = set(norm_last.split())
+        if not input_words:
+            return False
+
+        overlap = input_words.intersection(last_words)
+        overlap_ratio = len(overlap) / float(len(input_words))
+
+        # Si recién terminó de hablar (<0.7s) somos más estrictos con el solapamiento
+        time_since_speech = time.time() - self.last_speech_end_time
+        if time_since_speech < 0.7 and (overlap_ratio >= 0.25 or len(overlap) >= 2):
+            return True
+
+        return overlap_ratio >= 0.35
 
     def start(self):
         """Inicia el monitoreo de la tecla PTT y el hilo de manos libres en segundo plano."""
@@ -324,10 +385,17 @@ class VoiceListener(QObject):
         try:
             text = self.recognizer.recognize_google(audio_data, language=self.language)
             logger.info(f"Texto reconocido: {text}")
-            if text.strip():
-                self.transcription_ready.emit(text.strip())
+            stripped = text.strip()
+            if stripped:
+                if self.is_echo(stripped):
+                    logger.info(f"[Anti-Echo] Descartada transcripción por eco acústico del parlante: '{stripped}'")
+                    self.error_occurred.emit("")
+                    if self.on_error:
+                        self.on_error("")
+                    return
+                self.transcription_ready.emit(stripped)
                 if self.on_transcription:
-                    self.on_transcription(text.strip())
+                    self.on_transcription(stripped)
         except sr.UnknownValueError:
             logger.warning("No se detectó voz comprensible.")
             self.error_occurred.emit("No logré entender lo que dijiste.")

@@ -113,6 +113,7 @@ class FloatingAvatar(QWidget):
     avatar_image_changed = pyqtSignal(str)
     hands_free_toggled = pyqtSignal(bool)
     friend_mode_toggled = pyqtSignal(bool)
+    open_call_dialog_requested = pyqtSignal()
 
     def __init__(self, avatar_path: str = "thruster_avatar.jpg"):
         super().__init__()
@@ -198,16 +199,16 @@ class FloatingAvatar(QWidget):
         )
         self.help_btn.clicked.connect(self.open_quick_guide_requested.emit)
 
-        # Botón Modo Charla con un Amigo (☕)
+        # Botón Modo Llamada / Charla con un Amigo (☕ / 📞)
         self.friend_chat_btn = QPushButton("☕")
         self.friend_chat_btn.setFixedSize(18, 18)
         self.friend_chat_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.friend_chat_btn.setToolTip("Modo Charla con un Amigo (Voz relajada, consejero cercano y con humor)")
+        self.friend_chat_btn.setToolTip("📞 Llamada Telefónica F3NIX (Voz a voz, colega relajado, sin filtro o director)")
         self.friend_chat_btn.setStyleSheet(
             "QPushButton { background: rgba(255, 183, 3, 0.15); color: #FFB703; border: 1px solid rgba(255, 183, 3, 0.4); border-radius: 9px; font-size: 10px; padding: 0; }"
             "QPushButton:hover { background: #FFB703; color: #000000; font-weight: bold; }"
         )
-        self.friend_chat_btn.clicked.connect(self.toggle_friend_mode)
+        self.friend_chat_btn.clicked.connect(self.open_call_dialog_requested.emit)
 
         # Botón 'Mira esto' (Visión de Pantalla en tiempo real con Moondream)
         self.vision_btn = QPushButton("👁️")
@@ -737,6 +738,7 @@ class FloatingAvatar(QWidget):
 
         # F3NIX Studio (Hermes Desktop Workspace)
         studio_act = menu.addAction("🏛️ Abrir F3NIX Studio / Mesa Redonda")
+        call_act = menu.addAction("📞 Llamada Telefónica con F3NIX (Voz a Voz)")
         friend_act = menu.addAction("☕ Modo Charla Amigo: ACTIVO (Relajado & Humor)" if getattr(self, "is_friend_mode", False) else "☕ Activar Modo Charla Amigo (Relajado & Humor)")
         launcher_act = menu.addAction("🔍 Barra Rápida Global (Alt + F)")
         mini_act = menu.addAction("🔮 Modo Mini-Orbe Zen" if not getattr(self, "is_mini_mode", False) else "🔮 Expandir HUD Completo")
@@ -848,6 +850,8 @@ class FloatingAvatar(QWidget):
             self.show_subtitle_message("Sistema", msg)
         elif action == studio_act:
             self.toggle_studio_requested.emit()
+        elif action == call_act:
+            self.open_call_dialog_requested.emit()
         elif action == friend_act:
             self.toggle_friend_mode()
         elif action == mini_act:

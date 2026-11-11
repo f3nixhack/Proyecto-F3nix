@@ -31,6 +31,8 @@ class VoiceSpeaker:
         self.is_speaking = False
         self._stop_requested = False
         self._lock = threading.Lock()
+        self.on_speech_started: Optional[Callable[[str], None]] = None
+        self.on_speech_finished: Optional[Callable[[], None]] = None
         self._init_mixer()
 
     @property
@@ -117,6 +119,12 @@ class VoiceSpeaker:
             self._stop_requested = False
             self.is_speaking = True
 
+            if self.on_speech_started:
+                try:
+                    self.on_speech_started(clean)
+                except Exception:
+                    pass
+
             if on_start:
                 try:
                     on_start()
@@ -164,6 +172,12 @@ class VoiceSpeaker:
                     except Exception as e:
                         logger.error(f"Error en callback on_finish: {e}")
 
+                if self.on_speech_finished:
+                    try:
+                        self.on_speech_finished()
+                    except Exception:
+                        pass
+
     def speak_stream(
         self,
         sentence_generator,
@@ -204,6 +218,12 @@ class VoiceSpeaker:
                         clean = self.clean_text_for_speech(sentence)
                         if not clean or len(clean.strip()) < 2:
                             continue
+
+                        if self.on_speech_started:
+                            try:
+                                self.on_speech_started(clean)
+                            except Exception:
+                                pass
 
                         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
                         temp_path = temp_audio.name
@@ -285,6 +305,12 @@ class VoiceSpeaker:
                         on_finish()
                     except Exception as e:
                         logger.error(f"Error en callback on_finish: {e}")
+
+                if self.on_speech_finished:
+                    try:
+                        self.on_speech_finished()
+                    except Exception:
+                        pass
 
     def stop(self):
         """Detiene la reproducción de voz actual inmediatamente."""

@@ -23,6 +23,7 @@ from ui.command_deck import CommandDeckDialog
 from ui.quick_guide_dialog import QuickGuideDialog
 from ui.environment_doctor_dialog import EnvironmentDoctorDialog
 from ui.quick_launcher_bar import QuickLauncherBar
+from ui.call_dialog import F3nixCallDialog
 from core.environment_doctor import EnvironmentDoctor
 
 logging.basicConfig(
@@ -125,6 +126,12 @@ class ThrusterApp:
         self.listener.barge_in_callback = self.speaker.stop
         self.listener.is_speaking_checker = lambda: getattr(self.speaker, "is_speaking", False)
 
+        # Filtro Anti-Eco Acústico de ChoferPro: notificar al listener qué habla el asistente
+        self.speaker.on_speech_started = lambda text: self.listener.set_last_assistant_speech(text)
+        self.speaker.on_speech_finished = lambda: self.listener.mark_speech_ended()
+
+        self.call_dialog: Optional[F3nixCallDialog] = None
+
         # Restaurar skin del avatar, modo manos libres y modo charla amigo
         saved_skin = config.get("skin", "cyberpunk")
         self.hud.apply_skin(saved_skin)
@@ -158,6 +165,7 @@ class ThrusterApp:
         self.hud.avatar_image_changed.connect(self.on_avatar_image_changed)
         self.hud.hands_free_toggled.connect(self.on_hands_free_toggled)
         self.hud.friend_mode_toggled.connect(self.on_friend_mode_toggled)
+        self.hud.open_call_dialog_requested.connect(self.open_call_dialog)
         self.hud.interrupt_requested.connect(self.interrupt_ai)
 
         # Conectar señales del Studio
@@ -323,37 +331,120 @@ class ThrusterApp:
         if hasattr(self, "studio") and self.studio:
             self.studio.log_activity("Sistema", "Modo Manos Libres", "Activado" if enabled else "Desactivado")
 
-    def on_friend_mode_toggled(self, enabled: bool):
-        """Activa o desactiva el Modo Charla con un Amigo y coordina el flujo manos libres."""
-        self.ai.set_friend_mode(enabled)
-        self.config["friend_mode"] = enabled
-        save_config(self.config)
-        if enabled:
-            # En Modo Amigo, habilitar automáticamente la escucha manos libres si estaba inactiva
-            if not getattr(self.listener, "hands_free", False):
-                self.hud.hands_free_active = True
-                self.listener.set_hands_free(True)
-            user_name = self._get_user_name()
-            saludos = [
-                f"¡Qué hacés, {user_name}! Acá estoy relajado. Tirame lo que tengas en mente o contame qué onda tu día.",
-                f"Buenas, {user_name}. Modo mate y charla activado. ¿Qué te anda pasando por la cabeza hoy?",
-                f"Hola {user_name}, ¡qué bueno charlar un rato! ¿En qué andamos hoy?"
-            ]
-            import random
-            greeting = random.choice(saludos)
-            self.hud.subtitle_received.emit("F3nix Amigo ☕", greeting)
-            self.studio.append_chat_message("F3nix Amigo ☕", greeting)
-            self.speaker.speak(
-                greeting,
-                on_start=lambda: self.hud.state_changed.emit("speaking"),
-                on_finish=lambda: self.hud.state_changed.emit("idle")
+    def open_call_dialog(self):
+        """Abre la interfaz de llamada telefónica interactiva en tiempo real (Voz a Voz)."""
+        if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
+            self.call_dialog.activateWindow()
+            self.call_dialog.raise_()
+            return
+
+        current_tone = getattr(self.ai, "call_tone", "amigo")
+        hf_state = getattr(self.listener, "hands_free", True)
+        self.call_dialog = F3nixCallDialog(
+            parent=None,
+            current_tone=current_tone,
+            hands_free=hf_state
+        )
+
+        # Ubicar la ventana en un lugar cómodo relativo al avatar
+        avatar_pos = self.hud.pos()
+        target_x = max(20, avatar_pos.x() - 410)
+        target_y = max(20, avatar_pos.y() - 100)
+        self.call_dialog.move(target_x, target_y)
+
+        # Sincronizar imagen de avatar si existe
+        if getattr(self.hud, "avatar_pixmap", None):
+            self.call_dialog.set_avatar_image(self.hud.avatar_pixmap)
+
+        # Activar modo amigo / voz en el motor de IA
+        self.ai.set_friend_mode(True)
+        self.hud.is_friend_mode = True
+        if hasattr(self.hud, "friend_chat_btn"):
+            self.hud.friend_chat_btn.setStyleSheet(
+                "QPushButton { background: #FFB703; color: #000000; border: 1px solid #FFA000; border-radius: 9px; font-size: 10px; font-weight: bold; padding: 0; }"
             )
-            if hasattr(self, "studio") and self.studio:
-                self.studio.log_activity("Amigo", "Modo Charla Amigo Activado", "Conversación relajada, consejero y con humor")
+
+        # Asegurar manos libres para flujo telefónico natural
+        if not self.listener.hands_free:
+            self.listener.set_hands_free(True)
+            self.hud.hands_free_active = True
+
+        # Conectar señales de la llamada
+        self.call_dialog.call_ended.connect(self.on_call_ended)
+        self.call_dialog.query_submitted.connect(self.on_transcription_ready)
+        self.call_dialog.hands_free_toggled.connect(self.on_hands_free_toggled)
+        self.call_dialog.tone_changed.connect(self.on_call_tone_changed)
+        self.call_dialog.mute_toggled.connect(self.on_call_mute_toggled)
+        self.call_dialog.barge_in_requested.connect(self.interrupt_ai)
+
+        self.call_dialog.show()
+
+        user_name = self._get_user_name()
+        salutation = self._get_salutation()
+        if current_tone == "sin_filtro":
+            greeting = f"¿Qué hacés, {user_name}? Me tenés al teléfono. Decime qué quilombo tenés hoy y lo resolvemos sin filtro."
+        elif current_tone == "director":
+            greeting = f"Línea directa activa, {salutation}. Cuénteme la situación y definamos el siguiente paso estratégico."
         else:
-            self.hud.subtitle_received.emit("Sistema", "Modo Amigo desactivado. Volviendo a asistente estándar.")
-            if hasattr(self, "studio") and self.studio:
-                self.studio.log_activity("Sistema", "Modo Amigo Desactivado", "Asistente estándar")
+            greeting = f"¡Qué hacés, {user_name}! Acá estoy en llamada. ¿Qué onda tu día? Contame y lo charlamos relajados."
+
+        self.call_dialog.update_assistant_speech(greeting, is_final=True)
+        self.hud.subtitle_received.emit("Llamada F3NIX 📞", greeting)
+        self.speaker.speak(
+            greeting,
+            on_start=lambda: self.hud.state_changed.emit("speaking"),
+            on_finish=lambda: self.hud.state_changed.emit("idle")
+        )
+        if hasattr(self, "studio") and self.studio:
+            self.studio.log_activity("Llamada", f"Llamada Iniciada ({current_tone.upper()})", "Voz a voz interactivo con filtro anti-eco")
+
+    def on_call_ended(self):
+        """Finaliza la llamada telefónica y restablece el estado."""
+        self.speaker.stop()
+        self.ai.set_friend_mode(False)
+        self.hud.is_friend_mode = False
+        if hasattr(self.hud, "friend_chat_btn"):
+            self.hud.friend_chat_btn.setStyleSheet(
+                "QPushButton { background: rgba(255, 183, 3, 0.15); color: #FFB703; border: 1px solid rgba(255, 183, 3, 0.4); border-radius: 9px; font-size: 10px; padding: 0; }"
+                "QPushButton:hover { background: #FFB703; color: #000000; font-weight: bold; }"
+            )
+        self.hud.set_state("idle")
+        self.hud.show_subtitle_message("Llamada", "Llamada finalizada. F3NIX en modo asistente estándar.")
+        if hasattr(self, "studio") and self.studio:
+            self.studio.log_activity("Llamada", "Llamada Finalizada", "Conexión telefónica cerrada")
+
+    def on_call_tone_changed(self, new_tone: str):
+        """Ajusta el tono de personalidad en caliente durante la llamada."""
+        self.ai.set_call_tone(new_tone)
+        user_name = self._get_user_name()
+        if new_tone == "sin_filtro":
+            phrase = f"Modo sin filtro activado, {user_name}. Preparate que no me guardo nada."
+        elif new_tone == "director":
+            phrase = f"Modo director estratégico fijado. Visión macro y ejecución implacable."
+        else:
+            phrase = f"Modo colega amigo activado. Todo relax, confianza y humor."
+        if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
+            self.call_dialog.update_assistant_speech(phrase, is_final=True)
+        self.hud.subtitle_received.emit("Tono Llamada", phrase)
+        self.speaker.speak(
+            phrase,
+            on_start=lambda: self.hud.state_changed.emit("speaking"),
+            on_finish=lambda: self.hud.state_changed.emit("idle")
+        )
+
+    def on_call_mute_toggled(self, is_muted: bool):
+        """Maneja el silenciamiento de voz."""
+        if is_muted:
+            self.speaker.stop()
+
+    def on_friend_mode_toggled(self, enabled: bool):
+        """Activa o desactiva el Modo Charla con un Amigo y coordina el flujo de llamada telefónica."""
+        if enabled:
+            self.open_call_dialog()
+        else:
+            if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
+                self.call_dialog.close()
+            self.on_call_ended()
 
     def on_global_esc_pressed(self):
         """Atajo global Esc: interrumpe a F3NIX si está hablando o procesando."""
@@ -770,6 +861,8 @@ class ThrusterApp:
         logger.info(f"Usuario: {clean_text}")
         self.hud.subtitle_received.emit("Tú", clean_text)
         self.studio.append_chat_message("Tú", clean_text)
+        if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
+            self.call_dialog.update_user_speech(clean_text)
 
         # Si ya hay una consulta en proceso, notificar y no saturar CPU con hilos paralelos
         if self._is_ai_busy:
@@ -911,6 +1004,8 @@ class ThrusterApp:
                     full_reply = chunk.get("full_text", "")
                     sender_title = "F3nix Amigo ☕" if getattr(self.ai, "friend_mode", False) else "F3nix"
                     self.hud.subtitle_received.emit(sender_title, full_reply)
+                    if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
+                        self.call_dialog.update_assistant_speech(full_reply, is_final=False)
                 elif c_type == "sentence":
                     sentence_text = chunk.get("content", "")
                     if sentence_text:
@@ -932,6 +1027,8 @@ class ThrusterApp:
         if full_reply:
             sender_title = "F3nix Amigo ☕" if getattr(self.ai, "friend_mode", False) else "F3nix"
             self.studio.append_chat_message(sender_title, full_reply)
+            if hasattr(self, "call_dialog") and self.call_dialog and self.call_dialog.isVisible():
+                self.call_dialog.update_assistant_speech(full_reply, is_final=True)
 
     def start(self):
         """Arranca el HUD y el escuchador PTT con auto-arranque silencioso de Ollama y saludo de bienvenida."""
